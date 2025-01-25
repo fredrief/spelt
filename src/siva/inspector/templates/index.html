@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <!-- File Browser -->
+    <div class="col-3">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <button id="up-button" class="btn btn-sm btn-secondary me-2" onclick="navigateUp()" disabled>
+                            <i class="bi bi-arrow-up"></i>
+                        </button>
+                        File Explorer
+                    </div>
+                    <button class="btn btn-sm btn-primary" onclick="openFolder()">
+                        Open Folder
+                    </button>
+                </div>
+                <div id="current-path" class="small text-muted mt-1"></div>
+            </div>
+            <div class="card-body" id="file-browser">
+                <div id="browser-content">
+                    <!-- File list will be loaded here -->
+                </div>
+                <div id="browser-error" class="alert alert-danger d-none">
+                    <!-- Errors will be shown here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plot Area -->
+    <div class="col-9">
+        <div class="card">
+            <div class="card-header">
+                Plots
+            </div>
+            <div class="card-body">
+                <div id="plot-container">
+                    <div id="bokeh-plot"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden file input -->
+<input type="file" id="folder-input" webkitdirectory directory style="display: none">
+
+<script>
+let currentPath = '';
+
+function navigateUp() {
+    if (currentPath) {
+        fetch(`/browse/${currentPath}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.parent_path !== null) {
+                    loadDirectory(data.parent_path);
+                } else {
+                    loadDirectory('');
+                }
+            });
+    }
+}
+
+function loadDirectory(path='') {
+    const browserContent = document.getElementById('browser-content');
+    const browserError = document.getElementById('browser-error');
+    const upButton = document.getElementById('up-button');
+    const currentPathElement = document.getElementById('current-path');
+
+    // Update current path
+    currentPath = path;
+
+    // Show loading state
+    browserContent.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+    browserError.classList.add('d-none');
+
+    fetch(`/browse/${path}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            // Enable/disable up button
+            upButton.disabled = data.is_root;
+
+            // Show current path
+            currentPathElement.textContent = data.current_path || '/';
+
+            // Update file list
+            browserContent.innerHTML = data.items.map(item => `
+                <div class="d-flex align-items-center p-2 border-bottom"
+                     data-path="${item.path}"
+                     data-type="${item.type}"
+                     style="cursor: pointer">
+                    <i class="bi ${item.type === 'signal' ? 'bi-graph-up' : 'bi-folder'} me-2"></i>
+                    <span>${item.name}</span>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            browserContent.querySelectorAll('[data-path]').forEach(el => {
+                el.addEventListener('click', () => {
+                    if (el.dataset.type === 'folder') {
+                        loadDirectory(el.dataset.path);
+                    } else {
+                        plotSignal(el.dataset.path);
+                    }
+                });
+            });
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            browserError.textContent = `Error loading directory: ${error.message}`;
+            browserError.classList.remove('d-none');
+        });
+}
+
+// Open folder dialog
+function openFolder() {
+    const input = document.getElementById('folder-input');
+    input.onchange = function() {
+        if (this.files.length > 0) {
+            const folderPath = this.files[0].path.split(this.files[0].name)[0];
+            fetch('/set-root', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ path: folderPath })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadDirectory();
+                }
+            });
+        }
+    };
+    input.click();
+}
+
+// Load initial directory
+loadDirectory();
+
+// Plot signal function
+function plotSignal(path) {
+    const plotContainer = document.getElementById('plot-container');
+    plotContainer.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+
+    fetch(`/plot/${path}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('Received data:', data);  // Debug log
+
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            if (!data.script || !data.div) {
+                throw new Error('Invalid plot data received');
+            }
+
+            // Clear existing content
+            plotContainer.innerHTML = '';
+
+            // Create a new div for the plot
+            const plotDiv = document.createElement('div');
+            plotDiv.innerHTML = data.div;
+            plotContainer.appendChild(plotDiv);
+
+            try {
+                // Create a new script element
+                const scriptElement = document.createElement('script');
+                scriptElement.type = 'text/javascript';
+                scriptElement.text = data.script;
+                document.body.appendChild(scriptElement);
+            } catch (e) {
+                console.error('Script evaluation error:', e);
+                console.log('Script content:', data.script);
+                throw e;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            plotContainer.innerHTML = `<div class="alert alert-danger">Error plotting signal: ${error.message}</div>`;
+        });
+}
+</script>
+{% endblock %}

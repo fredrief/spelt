@@ -1,0 +1,27 @@
+[project]
+name = "siva"
+version = "0.1.0"
+description = "Signal Visualization and Analysis"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+dependencies = [
+    "flask",
+    "python-dotenv",
+    "numpy",
+    "bokeh==3.3.4",
+    "watchdog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-watch",
+]
+
+[project.scripts]
+siva-inspect = "siva.inspector.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
