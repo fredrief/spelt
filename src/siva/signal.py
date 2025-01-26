@@ -39,7 +39,6 @@ class MetadataKeys(Enum):
 @dataclass
 class MetadataValidator:
     """Validation rules for metadata."""
-    required: bool = False
     validator: Optional[Callable[[Any], bool]] = None
     error_msg: str = "Invalid value"
 
@@ -95,7 +94,6 @@ class MetadataValidation:
     # Validation rules for each metadata key
     RULES = {
         MetadataKeys.SAMPLING_TYPE: MetadataValidator(
-            required=True,
             validator=is_valid_sampling_type,
             error_msg="Sampling type must be a valid SamplingType value"
         ),
@@ -116,7 +114,6 @@ class MetadataValidation:
             error_msg="X interval must be a positive number"
         ),
         MetadataKeys.DIMENSIONS: MetadataValidator(
-            required=True,
             validator=is_valid_dimension_list,
             error_msg="Dimensions must be a list of strings"
         ),
@@ -125,7 +122,6 @@ class MetadataValidation:
             error_msg="Dimension units must be a list of valid unit specifications"
         ),
         MetadataKeys.DOMAIN: MetadataValidator(
-            required=True,
             validator=is_valid_domain,
             error_msg="Domain must be a valid SignalDomain value"
         )
@@ -420,11 +416,6 @@ class Signal:
             return
 
         rule = MetadataValidation.RULES[key]
-        if value is None:
-            if rule.required:
-                raise ValueError(f"Metadata key '{key.value}' is required")
-            return
-
         if rule.validator and not rule.validator(value):
             raise ValueError(f"Invalid value for '{key.value}': {rule.error_msg}")
 

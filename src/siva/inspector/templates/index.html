@@ -340,11 +340,16 @@ function plotSignal(path, mode = 'replace') {
     fetch(`/plot/${path}?mode=${plotMode}&tab_id=${tabId}`)
         .then(response => {
             if (!response.ok) {
+                if (response.status === 400 && mode === 'overlay') {
+                    // Silently ignore x-unit mismatch in overlay mode
+                    return;
+                }
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
             return response.json();
         })
         .then(data => {
+            if (!data) return;  // Early return if we ignored the operation
             if (data.error) {
                 throw new Error(data.error);
             }
@@ -377,7 +382,10 @@ function openFolder() {
     const input = document.getElementById('folder-input');
     input.onchange = function() {
         if (this.files.length > 0) {
-            const folderPath = this.files[0].path.split(this.files[0].name)[0];
+            // Get the parent directory of the first file
+            const filePath = this.files[0].path;
+            const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+
             fetch('/set-root', {
                 method: 'POST',
                 headers: {
@@ -392,7 +400,7 @@ function openFolder() {
                     fetch('/clear-plot-state').then(() => {
                         loadDirectory();
                         // Clear plot container
-                        document.getElementById('plot-container').innerHTML = '';
+                        document.querySelector('.plot-container').innerHTML = '';
                     });
                 }
             });

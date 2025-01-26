@@ -5,6 +5,9 @@ def create_app(root_dir: str | Path = None):
     """Create and configure the Flask application."""
     app = Flask(__name__)
 
+    # Set a secret key for session support
+    app.secret_key = 'dev'  # TODO: Use a proper secret key in production
+
     # Use provided directory or default to current
     if root_dir is None:
         root_dir = '.'

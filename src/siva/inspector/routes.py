@@ -154,6 +154,11 @@ def plot_signal(signal_path):
                     'error': f'X-axis unit mismatch: {current_x_unit} vs {new_x_unit}'
                 }), 400
 
+        # Calculate x range for the new signal
+        x_data = signal.x_data if signal.x_data is not None else np.arange(len(signal))
+        x_min, x_max = np.min(x_data), np.max(x_data)
+        y_min, y_max = np.min(np.real(signal.data)), np.max(np.real(signal.data))  # Only plot real part for now
+
         # Create new figure
         p = figure(
             height=400,
@@ -169,11 +174,6 @@ def plot_signal(signal_path):
 
         # Get color palette
         colors = Category10[10]
-
-        # Calculate x range for the new signal
-        x_data = signal.x_data if signal.x_data is not None else np.arange(len(signal))
-        x_min, x_max = np.min(x_data), np.max(x_data)
-        y_min, y_max = np.min(signal.data), np.max(signal.data)
 
         # Handle y-axis based on mode and units
         y_unit = signal.metadata.get(MetadataKeys.UNIT.value, '')
@@ -315,7 +315,7 @@ def plot_signal(signal_path):
 
                 source = ColumnDataSource({
                     'x': existing_signal.x_data if existing_signal.x_data is not None else np.arange(len(existing_signal)),
-                    'y': existing_signal.data
+                    'y': np.real(existing_signal.data)  # Only use real part for now
                 })
                 p.line('x', 'y', source=source, line_width=2, y_range_name=range_name, color=colors[i % len(colors)])
 
@@ -327,7 +327,7 @@ def plot_signal(signal_path):
         # Plot the new signal
         source = ColumnDataSource({
             'x': signal.x_data if signal.x_data is not None else np.arange(len(signal)),
-            'y': signal.data
+            'y': np.real(signal.data)  # Only use real part for now
         })
 
         # Use the first unit's range as default, otherwise use the mapped range
