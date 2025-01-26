@@ -34,11 +34,24 @@
     <div class="col-9">
         <div class="card">
             <div class="card-header">
-                Plots
+                <!-- Tab navigation -->
+                <ul class="nav nav-tabs card-header-tabs" id="plot-tabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="tab-1" data-bs-toggle="tab" data-bs-target="#plot-1" type="button" role="tab">
+                            Plot 1
+                            <span class="ms-2 close-tab">&times;</span>
+                        </button>
+                    </li>
+                </ul>
             </div>
             <div class="card-body">
-                <div id="plot-container">
-                    <div id="bokeh-plot"></div>
+                <!-- Tab content -->
+                <div class="tab-content" id="plot-tabs-content">
+                    <div class="tab-pane fade show active" id="plot-1" role="tabpanel">
+                        <div class="plot-container">
+                            <div class="bokeh-plot"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -47,6 +60,19 @@
 
 <!-- Hidden file input -->
 <input type="file" id="folder-input" webkitdirectory directory style="display: none">
+
+<!-- Context Menu -->
+<div id="context-menu" class="position-fixed bg-white border rounded shadow p-2" style="display: none; z-index: 1000;">
+    <div class="context-menu-item" data-action="replace">
+        <i class="bi bi-arrow-repeat me-2"></i>Replace
+    </div>
+    <div class="context-menu-item" data-action="append">
+        <i class="bi bi-plus-circle me-2"></i>Append
+    </div>
+    <div class="context-menu-item" data-action="new-tab">
+        <i class="bi bi-plus-square me-2"></i>New Tab
+    </div>
+</div>
 
 <script>
 let currentPath = '';
@@ -105,19 +131,244 @@ function loadDirectory(path='') {
 
             // Add click handlers
             browserContent.querySelectorAll('[data-path]').forEach(el => {
-                el.addEventListener('click', () => {
+                el.addEventListener('click', (event) => {
                     if (el.dataset.type === 'folder') {
                         loadDirectory(el.dataset.path);
                     } else {
-                        plotSignal(el.dataset.path);
+                        // Just select the signal
+                        selectSignal(el);
                     }
                 });
+
+                // Add right-click handler for signals
+                if (el.dataset.type === 'signal') {
+                    el.addEventListener('contextmenu', (event) => {
+                        showContextMenu(event, el);
+                    });
+                }
             });
         })
         .catch(error => {
             console.error('Error:', error);
             browserError.textContent = `Error loading directory: ${error.message}`;
             browserError.classList.remove('d-none');
+        });
+}
+
+// Load initial directory
+loadDirectory();
+
+// Clear plot state when page loads
+fetch('/clear-plot-state').then(() => {
+    // Clear plot container
+    document.getElementById('plot-container').innerHTML = '';
+});
+
+// Context menu handling
+let contextMenuTarget = null;
+
+function showContextMenu(event, element) {
+    event.preventDefault();
+    const contextMenu = document.getElementById('context-menu');
+    contextMenu.style.display = 'block';
+    contextMenu.style.left = `${event.pageX}px`;
+    contextMenu.style.top = `${event.pageY}px`;
+    contextMenuTarget = element;
+}
+
+function hideContextMenu() {
+    const contextMenu = document.getElementById('context-menu');
+    contextMenu.style.display = 'none';
+    contextMenuTarget = null;
+}
+
+function selectSignal(element) {
+    // Remove selection from other elements
+    document.querySelectorAll('.signal-selected').forEach(el => {
+        el.classList.remove('signal-selected');
+    });
+    // Add selection to clicked element
+    element.classList.add('signal-selected');
+}
+
+// Handle context menu item clicks
+document.getElementById('context-menu').addEventListener('click', (event) => {
+    const action = event.target.closest('.context-menu-item')?.dataset.action;
+    if (!action || !contextMenuTarget) return;
+
+    const path = contextMenuTarget.dataset.path;
+    switch (action) {
+        case 'replace':
+            plotSignal(path, 'replace');
+            break;
+        case 'append':
+            plotSignal(path, 'overlay');
+            break;
+        case 'new-tab':
+            plotSignal(path, 'new-tab');
+            break;
+    }
+    hideContextMenu();
+});
+
+// Hide context menu when clicking outside
+document.addEventListener('click', hideContextMenu);
+
+// Tab management
+let nextTabId = 2;  // Start from 2 since we have tab-1 by default
+
+function createNewTab() {
+    const tabId = nextTabId++;
+
+    // Create tab button
+    const tabButton = document.createElement('li');
+    tabButton.className = 'nav-item';
+    tabButton.role = 'presentation';
+    tabButton.innerHTML = `
+        <button class="nav-link" id="tab-${tabId}" data-bs-toggle="tab" data-bs-target="#plot-${tabId}" type="button" role="tab">
+            Plot ${tabId}
+            <span class="ms-2 close-tab">&times;</span>
+        </button>
+    `;
+
+    // Create tab content
+    const tabContent = document.createElement('div');
+    tabContent.className = 'tab-pane fade';
+    tabContent.id = `plot-${tabId}`;
+    tabContent.role = 'tabpanel';
+    tabContent.innerHTML = `
+        <div class="plot-container">
+            <div class="bokeh-plot"></div>
+        </div>
+    `;
+
+    // Add to DOM
+    document.getElementById('plot-tabs').appendChild(tabButton);
+    document.getElementById('plot-tabs-content').appendChild(tabContent);
+
+    // Add close handler
+    const closeButton = tabButton.querySelector('.close-tab');
+    closeButton.onclick = (event) => closeTab(tabId, event);
+
+    // Show close buttons if we have more than one tab
+    updateCloseButtonVisibility();
+
+    // Activate the new tab
+    const tab = new bootstrap.Tab(document.getElementById(`tab-${tabId}`));
+    tab.show();
+
+    return tabId;
+}
+
+function updateCloseButtonVisibility() {
+    const tabs = document.querySelectorAll('#plot-tabs .nav-item');
+    const hasMultipleTabs = tabs.length > 1;
+    tabs.forEach(tab => {
+        const closeButton = tab.querySelector('.close-tab');
+        if (closeButton) {
+            closeButton.style.display = hasMultipleTabs ? 'inline' : 'none';
+        }
+    });
+}
+
+// Initialize close button for first tab
+document.addEventListener('DOMContentLoaded', function() {
+    const firstTabCloseButton = document.querySelector('#tab-1 .close-tab');
+    if (firstTabCloseButton) {
+        firstTabCloseButton.onclick = (event) => closeTab(1, event);
+    }
+    updateCloseButtonVisibility();
+});
+
+// Update closeTab function to prevent closing the last tab
+function closeTab(tabId, event) {
+    // Prevent event from triggering tab switch
+    event.stopPropagation();
+
+    // Don't close if it's the last tab
+    const tabs = document.querySelectorAll('#plot-tabs .nav-item');
+    if (tabs.length === 1) {
+        return;
+    }
+
+    // Remove tab and its content
+    const tab = document.getElementById(`tab-${tabId}`).parentElement;
+    const tabContent = document.getElementById(`plot-${tabId}`);
+
+    // If this is the active tab, switch to another tab first
+    if (tab.querySelector('.nav-link').classList.contains('active')) {
+        // Find another tab to activate
+        const firstTab = document.querySelector('#plot-tabs .nav-link:not(.active)');
+        if (firstTab) {
+            const bsTab = new bootstrap.Tab(firstTab);
+            bsTab.show();
+        }
+    }
+
+    // Remove the tab and its content
+    tab.remove();
+    tabContent.remove();
+
+    // Update close button visibility
+    updateCloseButtonVisibility();
+
+    // Clear plot state for this tab
+    fetch(`/clear-plot-state?tab_id=${tabId}`);
+}
+
+// Update plotSignal function to handle different modes
+function plotSignal(path, mode = 'replace') {
+    let tabId, plotContainer;
+    let plotMode = mode;  // Keep original mode for the API call
+
+    if (mode === 'new-tab') {
+        tabId = createNewTab();
+        plotContainer = document.querySelector(`#plot-${tabId} .plot-container`);
+        plotMode = 'replace';  // First plot in new tab should be replace
+    } else {
+        // Use currently active tab
+        const activeTab = document.querySelector('.tab-pane.active');
+        tabId = activeTab.id.replace('plot-', '');
+        plotContainer = activeTab.querySelector('.plot-container');
+    }
+
+    // Show loading state
+    if (mode === 'replace' || mode === 'new-tab') {
+        plotContainer.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+    }
+
+    fetch(`/plot/${path}?mode=${plotMode}&tab_id=${tabId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Only update plot if we received plot data
+            if (data.script && data.div) {
+                // Always replace the content for both replace and overlay modes
+                plotContainer.innerHTML = data.div;
+
+                // Execute plot script
+                const scriptElement = document.createElement('script');
+                scriptElement.type = 'text/javascript';
+                scriptElement.text = data.script;
+                document.body.appendChild(scriptElement);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (mode === 'replace') {
+                plotContainer.innerHTML = `<div class="alert alert-danger">Error plotting signal: ${error.message}</div>`;
+            } else {
+                // Show error toast or notification for non-replace modes
+                alert(`Error plotting signal: ${error.message}`);
+            }
         });
 }
 
@@ -137,64 +388,50 @@ function openFolder() {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    loadDirectory();
+                    // Clear plot state when opening a new folder
+                    fetch('/clear-plot-state').then(() => {
+                        loadDirectory();
+                        // Clear plot container
+                        document.getElementById('plot-container').innerHTML = '';
+                    });
                 }
             });
         }
     };
     input.click();
 }
-
-// Load initial directory
-loadDirectory();
-
-// Plot signal function
-function plotSignal(path) {
-    const plotContainer = document.getElementById('plot-container');
-    plotContainer.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
-
-    fetch(`/plot/${path}`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            console.log('Received data:', data);  // Debug log
-
-            if (data.error) {
-                throw new Error(data.error);
-            }
-
-            if (!data.script || !data.div) {
-                throw new Error('Invalid plot data received');
-            }
-
-            // Clear existing content
-            plotContainer.innerHTML = '';
-
-            // Create a new div for the plot
-            const plotDiv = document.createElement('div');
-            plotDiv.innerHTML = data.div;
-            plotContainer.appendChild(plotDiv);
-
-            try {
-                // Create a new script element
-                const scriptElement = document.createElement('script');
-                scriptElement.type = 'text/javascript';
-                scriptElement.text = data.script;
-                document.body.appendChild(scriptElement);
-            } catch (e) {
-                console.error('Script evaluation error:', e);
-                console.log('Script content:', data.script);
-                throw e;
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            plotContainer.innerHTML = `<div class="alert alert-danger">Error plotting signal: ${error.message}</div>`;
-        });
-}
 </script>
+
+<style>
+.context-menu-item {
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    white-space: nowrap;
+}
+
+.context-menu-item:hover {
+    background-color: #f8f9fa;
+}
+
+.signal-selected {
+    background-color: #e9ecef;
+}
+
+.close-tab {
+    cursor: pointer;
+    opacity: 0.5;
+}
+
+.close-tab:hover {
+    opacity: 1;
+}
+
+.nav-link .close-tab {
+    display: inline;
+}
+
+.nav-link:not(:only-child) .close-tab {
+    display: inline;
+}
+</style>
 {% endblock %}
