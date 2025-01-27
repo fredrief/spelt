@@ -204,6 +204,98 @@ def generate_spatial_domain_signals(base_path: Path):
 
     return signals
 
+def generate_multidim_signals(base_path: Path):
+    """Generate multi-dimensional test signals."""
+    multidim_path = base_path / "multidim"
+
+    # Time base for all signals
+    t = np.linspace(0, 1, 1000)
+
+    # 2D signal: Multiple voltage channels (L x M)
+    # L = 1000 time points
+    # M = 4 channels with different phases
+    channels_2d = np.zeros((len(t), 4))
+    for i in range(4):
+        phase = i * np.pi / 4  # Different phase for each channel
+        channels_2d[:, i] = 5 * np.sin(2 * np.pi * 10 * t + phase)
+
+    signals = [
+        {
+            "name": "multichannel_voltage",
+            "data": channels_2d,
+            "x_data": t,
+            "metadata": {
+                MetadataKeys.NAME.value: "Multi-Channel Voltage",
+                MetadataKeys.UNIT.value: "V",
+                MetadataKeys.X_UNIT.value: "s",
+                MetadataKeys.X_NAME.value: "Time",
+                MetadataKeys.DOMAIN.value: SignalDomain.TIME.value,
+                MetadataKeys.SAMPLING_TYPE.value: SamplingType.REGULAR.value,
+                MetadataKeys.DIMENSIONS.value: ["time", "channel"]
+            },
+            "path": multidim_path / "voltage/multichannel"
+        }
+    ]
+
+    # 3D signal: Multiple channels with different gains (L x M x N)
+    # L = 1000 time points
+    # M = 4 channels with different phases
+    # N = 3 gain settings
+    channels_3d = np.zeros((len(t), 4, 3))
+    gains = [0.5, 1.0, 2.0]  # Different gain settings
+    for i in range(4):
+        phase = i * np.pi / 4
+        base_signal = np.sin(2 * np.pi * 10 * t + phase)
+        for j, gain in enumerate(gains):
+            channels_3d[:, i, j] = 5 * gain * base_signal
+
+    signals.append({
+        "name": "voltage_gain_sweep",
+        "data": channels_3d,
+        "x_data": t,
+        "metadata": {
+            MetadataKeys.NAME.value: "Voltage Gain Sweep",
+            MetadataKeys.UNIT.value: "V",
+            MetadataKeys.X_UNIT.value: "s",
+            MetadataKeys.X_NAME.value: "Time",
+            MetadataKeys.DOMAIN.value: SignalDomain.TIME.value,
+            MetadataKeys.SAMPLING_TYPE.value: SamplingType.REGULAR.value,
+            MetadataKeys.DIMENSIONS.value: ["time", "channel", "gain"]
+        },
+        "path": multidim_path / "voltage/gain_sweep"
+    })
+
+    # 4D signal: Multiple channels, gains, and frequencies (L x M x N x P)
+    # L = 1000 time points
+    # M = 4 channels with different phases
+    # N = 3 gain settings
+    # P = 2 frequencies
+    channels_4d = np.zeros((len(t), 4, 3, 2))
+    freqs = [5, 10]  # Different frequencies
+    for i in range(4):
+        phase = i * np.pi / 4
+        for j, gain in enumerate(gains):
+            for k, freq in enumerate(freqs):
+                channels_4d[:, i, j, k] = 5 * gain * np.sin(2 * np.pi * freq * t + phase)
+
+    signals.append({
+        "name": "voltage_freq_gain_sweep",
+        "data": channels_4d,
+        "x_data": t,
+        "metadata": {
+            MetadataKeys.NAME.value: "Voltage Frequency and Gain Sweep",
+            MetadataKeys.UNIT.value: "V",
+            MetadataKeys.X_UNIT.value: "s",
+            MetadataKeys.X_NAME.value: "Time",
+            MetadataKeys.DOMAIN.value: SignalDomain.TIME.value,
+            MetadataKeys.SAMPLING_TYPE.value: SamplingType.REGULAR.value,
+            MetadataKeys.DIMENSIONS.value: ["time", "channel", "gain", "frequency"]
+        },
+        "path": multidim_path / "voltage/freq_gain_sweep"
+    })
+
+    return signals
+
 def create_signals_json(path: Path, signals: list):
     """Create .signals.json files in the given directory and all parent directories."""
     # Get all unique parent directories that should have .signals.json
@@ -242,21 +334,23 @@ def main():
     all_signals.extend(generate_time_domain_signals(base_path))
     all_signals.extend(generate_frequency_domain_signals(base_path))
     all_signals.extend(generate_spatial_domain_signals(base_path))
+    all_signals.extend(generate_multidim_signals(base_path))  # Add multi-dimensional signals
 
     # Create directories and save signals
     for signal_info in all_signals:
         path = signal_info["path"]
         path.mkdir(parents=True, exist_ok=True)
 
+        # Create signal object and save
         signal = Signal(
             data=signal_info["data"],
-            x_data=signal_info["x_data"],
-            metadata=signal_info["metadata"]
+            metadata=signal_info["metadata"],
+            x_data=signal_info.get("x_data")
         )
         signal.save(path)
-        print(f"Saved signal: {path}")
+        print(f"Created signal: {path}")
 
-    # Create .signals.json files in all relevant directories
+    # Create .signals.json files
     create_signals_json(base_path, all_signals)
 
 if __name__ == "__main__":

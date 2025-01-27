@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 ureg = UnitRegistry()
 
+# TODO: version number in signal meta data
+
 # Add type variable for numeric types
 NumericType = TypeVar('NumericType', int, float, np.number)
 

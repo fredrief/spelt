@@ -27,15 +27,14 @@ A web-based tool for visualizing and analyzing signal data.
   - [x] Crosshair
 
 ### Phase 3: Multi-Signal & Advanced Plot Layout
-- [ ] Context Menu for Signal Loading
-  - [ ] Right-click menu with load options
-  - [ ] "Add to Current Plot" (overlay)
-  - [ ] "New Plot in Tab" (split view)
-  - [ ] "New Tab"
-- [ ] Multi-dimensional Signal Support
-  - [ ] Plot multiple traces with legend
-  - [ ] Dimension sliders for n-D data
-  - [ ] Dimension selection UI
+- [x] Context Menu for Signal Loading
+  - [x] Right-click menu with load options
+  - [x] "Add to Current Plot" (overlay)
+  - [x] "New Tab"
+- [x] Multi-dimensional Signal Support
+  - [x] Plot multiple traces with legend
+  - [x] Dimension sliders for n-D data
+  - [x] Dimension selection UI
 - [ ] Advanced Plot Layout
   - [ ] Split view with shared x-axis
   - [ ] Drag & drop between plots
@@ -50,6 +49,10 @@ A web-based tool for visualizing and analyzing signal data.
   - [ ] Signal visibility toggle
   - [ ] Color/style customization
   - [ ] Signal grouping
+- [ ] Plot Enhancements
+  - [ ] Auto-scaling on slider changes
+  - [ ] Multiple y-axes customization
+  - [ ] Plot style presets
 - [ ] Drag & Drop Enhancement
   - [ ] Drag to overlay
   - [ ] Drag to split
@@ -58,3 +61,9 @@ A web-based tool for visualizing and analyzing signal data.
   - [ ] Cursor tools
   - [ ] Delta measurements
   - [ ] Statistics per dimension
+
+### Misc:
+- right click axes to set log/lin scale, dB etc
+- Save session state?
+- Delete signals from plot
+- Heatmap and other plot types

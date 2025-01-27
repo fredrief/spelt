@@ -7,8 +7,9 @@ from bokeh.embed import components
 from bokeh.resources import CDN
 from bokeh.models import (
     ColumnDataSource, HoverTool, CrosshairTool, CustomJSHover,
-    LinearAxis, Range1d
+    LinearAxis, Range1d, Slider, Column, CustomJS
 )
+from bokeh.layouts import column
 from bokeh.palettes import Category10
 import re
 from siva.signal import Signal, MetadataKeys, SignalDomain, SamplingType
@@ -126,7 +127,8 @@ def plot_signal(signal_path):
                 'y_units': [],
                 'x_unit': None,
                 'x_range': None,
-                'y_range': None
+                'y_range': None,
+                'slider_values': {}  # Store slider values per signal
             }
             session.modified = True
 
@@ -154,11 +156,6 @@ def plot_signal(signal_path):
                     'error': f'X-axis unit mismatch: {current_x_unit} vs {new_x_unit}'
                 }), 400
 
-        # Calculate x range for the new signal
-        x_data = signal.x_data if signal.x_data is not None else np.arange(len(signal))
-        x_min, x_max = np.min(x_data), np.max(x_data)
-        y_min, y_max = np.min(np.real(signal.data)), np.max(np.real(signal.data))  # Only plot real part for now
-
         # Create new figure
         p = figure(
             height=400,
@@ -179,11 +176,37 @@ def plot_signal(signal_path):
         y_unit = signal.metadata.get(MetadataKeys.UNIT.value, '')
         y_ranges = {}  # Store y ranges by unit
 
+        # Function to get data slice and calculate ranges
+        def get_data_slice(signal, slider_values=None):
+            data = signal.data
+            if data.ndim > 1:
+                # First dimension is always x-axis
+                # Second dimension creates multiple traces
+                # Higher dimensions use sliders
+                if data.ndim > 2:
+                    # Create slice tuple for dimensions > 2
+                    slice_indices = [slice(None), slice(None)]  # Keep first two dims as is
+                    for dim in range(2, data.ndim):
+                        idx = slider_values.get(f"{signal_path}_dim_{dim}", 0) if slider_values else 0
+                        slice_indices.append(idx)
+                    data = data[tuple(slice_indices)]
+
+                # Now data should be 2D (L x M)
+                return data
+            return data.reshape(-1, 1)  # Make 1D data 2D with shape (L, 1)
+
+        # Calculate ranges for the new signal
+        data_slice = get_data_slice(signal, plot_state.get('slider_values', {}))
+        x_data = signal.x_data if signal.x_data is not None else np.arange(data_slice.shape[0])
+        x_min, x_max = np.min(x_data), np.max(x_data)
+        y_min, y_max = np.min(np.real(data_slice)), np.max(np.real(data_slice))
+
         if mode == 'overlay' and plot_state['signals']:
             # First, load all existing signals to calculate ranges
             for existing_path in plot_state['signals']:
                 existing_signal = Signal.load(current_app.config['ROOT_DIR'] / existing_path)
-                existing_x = existing_signal.x_data if existing_signal.x_data is not None else np.arange(len(existing_signal))
+                existing_data = get_data_slice(existing_signal, plot_state.get('slider_values', {}))
+                existing_x = existing_signal.x_data if existing_signal.x_data is not None else np.arange(existing_data.shape[0])
                 x_min = min(x_min, np.min(existing_x))
                 x_max = max(x_max, np.max(existing_x))
 
@@ -191,8 +214,8 @@ def plot_signal(signal_path):
                 if existing_y_unit not in y_ranges:
                     y_ranges[existing_y_unit] = [np.inf, -np.inf]
 
-                y_ranges[existing_y_unit][0] = min(y_ranges[existing_y_unit][0], np.min(existing_signal.data))
-                y_ranges[existing_y_unit][1] = max(y_ranges[existing_y_unit][1], np.max(existing_signal.data))
+                y_ranges[existing_y_unit][0] = min(y_ranges[existing_y_unit][0], np.min(existing_data))
+                y_ranges[existing_y_unit][1] = max(y_ranges[existing_y_unit][1], np.max(existing_data))
 
             # Add new signal's range
             if y_unit not in y_ranges:
@@ -276,7 +299,8 @@ def plot_signal(signal_path):
         hover = HoverTool(
             tooltips=[
                 ('x', '@x{custom}' + (f' {x_unit}' if x_unit else '')),
-                ('y', '@y{custom}' + (f' {y_unit}' if y_unit else ''))
+                ('y', '@y{custom}' + (f' {y_unit}' if y_unit else '')),
+                ('trace', '@legend')
             ],
             formatters={
                 '@x': CustomJSHover(code=format_function),
@@ -306,6 +330,7 @@ def plot_signal(signal_path):
             for i, existing_path in enumerate(plot_state['signals']):
                 existing_signal = Signal.load(current_app.config['ROOT_DIR'] / existing_path)
                 existing_y_unit = existing_signal.metadata.get(MetadataKeys.UNIT.value, '')
+                existing_data = get_data_slice(existing_signal, plot_state.get('slider_values', {}))
 
                 # Use the first unit's range as default, otherwise use the mapped range
                 if existing_y_unit == list(y_ranges.keys())[0]:
@@ -313,53 +338,129 @@ def plot_signal(signal_path):
                 else:
                     range_name = unit_to_range[existing_y_unit]
 
-                source = ColumnDataSource({
-                    'x': existing_signal.x_data if existing_signal.x_data is not None else np.arange(len(existing_signal)),
-                    'y': np.real(existing_signal.data)  # Only use real part for now
-                })
-                p.line('x', 'y', source=source, line_width=2, y_range_name=range_name, color=colors[i % len(colors)])
+                # Plot each trace from the second dimension
+                for j in range(existing_data.shape[1]):
+                    source = ColumnDataSource({
+                        'x': existing_signal.x_data if existing_signal.x_data is not None else np.arange(existing_data.shape[0]),
+                        'y': np.real(existing_data[:, j]),
+                        'legend': [f'Trace {j+1}' for _ in range(existing_data.shape[0])]
+                    })
+                    legend_label = f"{existing_signal.metadata.get(MetadataKeys.NAME.value, 'Signal')} - Trace {j+1}"
+                    p.line('x', 'y', source=source, line_width=2, y_range_name=range_name,
+                          color=colors[(i * existing_data.shape[1] + j) % len(colors)],
+                          legend_label=legend_label)
 
             # Plot the new signal with the next color
-            color_index = len(plot_state['signals']) % len(colors)
+            color_index = len(plot_state['signals']) * data_slice.shape[1] % len(colors)
         else:
             color_index = 0
 
-        # Plot the new signal
-        source = ColumnDataSource({
-            'x': signal.x_data if signal.x_data is not None else np.arange(len(signal)),
-            'y': np.real(signal.data)  # Only use real part for now
-        })
+        # Create sliders for dimensions > 2
+        sliders = []
+        sources = []  # Store all data sources for updating
+        if signal.data.ndim > 2:
+            # Create separate data sources for each trace
+            sources = []
+            for j in range(data_slice.shape[1]):
+                source = ColumnDataSource({
+                    'x': signal.x_data if signal.x_data is not None else np.arange(data_slice.shape[0]),
+                    'y': np.real(data_slice[:, j]),
+                    'legend': [f'Trace {j+1}'] * data_slice.shape[0]  # One label per trace
+                })
+                sources.append(source)
 
-        # Use the first unit's range as default, otherwise use the mapped range
-        if y_unit == list(y_ranges.keys())[0] if y_ranges else True:
-            range_name = 'default'
+            # Store the full data for JavaScript
+            full_data = np.real(signal.data)  # Store only real part
+            js_data = full_data.tolist()  # Convert to list for JSON serialization
+
+            for dim in range(2, signal.data.ndim):
+                dim_name = signal.metadata.get(MetadataKeys.DIMENSIONS.value, [])[dim] if dim < len(signal.metadata.get(MetadataKeys.DIMENSIONS.value, [])) else f'Dimension {dim+1}'
+                slider = Slider(
+                    start=0,
+                    end=signal.data.shape[dim] - 1,
+                    value=plot_state.get('slider_values', {}).get(f"{signal_path}_dim_{dim}", 0),
+                    step=1,
+                    title=dim_name,
+                    width=p.width  # Match plot width
+                )
+                sliders.append(slider)
+
+            # Create JavaScript callback for slider updates
+            callback_code = """
+                // These variables are passed in through args
+                const data = full_data;
+                const data_sources = sources;
+                const all_sliders = sliders;
+
+                // Update each source
+                for (let i = 0; i < data_sources.length; i++) {
+                    let trace_data = data.map(row => row[i]);  // Get data for this trace
+
+                    // Apply higher dimension indices
+                    for (let dim = 0; dim < all_sliders.length; dim++) {
+                        const idx = all_sliders[dim].value;
+                        trace_data = trace_data.map(val => val[idx]);
+                    }
+
+                    data_sources[i].data.y = trace_data;
+                    data_sources[i].change.emit();
+                }
+            """
+
+            callback = CustomJS(
+                args=dict(
+                    sources=sources,
+                    full_data=js_data,
+                    sliders=sliders
+                ),
+                code=callback_code
+            )
+
+            # Connect callback to all sliders
+            for slider in sliders:
+                slider.js_on_change('value', callback)
+
+            # Plot using the data sources
+            for j, source in enumerate(sources):
+                p.line(
+                    'x', 'y',
+                    source=source,
+                    line_width=2,
+                    color=colors[j % len(colors)],
+                    legend_label=f"{signal.metadata.get(MetadataKeys.NAME.value, 'Signal')} - Trace {j+1}"
+                )
         else:
-            range_name = unit_to_range[y_unit]
+            # Original plotting code for 1D/2D signals
+            for j in range(data_slice.shape[1]):
+                source = ColumnDataSource({
+                    'x': signal.x_data if signal.x_data is not None else np.arange(data_slice.shape[0]),
+                    'y': np.real(data_slice[:, j]),
+                    'legend': [f'Trace {j+1}'] * data_slice.shape[0]  # One label per trace
+                })
+                sources.append(source)
 
-        p.line('x', 'y', source=source, line_width=2, y_range_name=range_name, color=colors[color_index])
+                legend_label = f"{signal.metadata.get(MetadataKeys.NAME.value, 'Signal')} - Trace {j+1}"
+                p.line('x', 'y', source=source, line_width=2,
+                      color=colors[j % len(colors)],
+                      legend_label=legend_label)
 
-        # Update plot state
-        if mode == 'overlay':
-            if signal_path not in plot_state['signals']:  # Only append if not already present
-                plot_state['signals'].append(signal_path)
-                if y_unit not in plot_state['y_units']:
-                    plot_state['y_units'].append(y_unit)
-                if not plot_state['x_unit']:
-                    plot_state['x_unit'] = x_unit
-                session['tabs'][tab_id] = plot_state  # Save the updated state
-                session.modified = True  # Ensure session is saved
-        elif mode == 'replace':
-            plot_state = {
-                'signals': [signal_path],
-                'y_units': [y_unit] if y_unit else [],
-                'x_unit': x_unit,
-                'x_range': None,
-                'y_range': None
-            }
-            session['tabs'][tab_id] = plot_state
+        # Configure legend
+        p.legend.click_policy = "hide"
+        p.legend.location = "top_right"
+        p.legend.background_fill_alpha = 0.7
 
-        # Generate plot components
-        script, div = components(p)
+        # Create layout with proper sizing
+        if sliders:
+            # Create a column layout with proper sizing
+            layout = column(
+                p,
+                *sliders,
+                sizing_mode='stretch_width',  # Make everything stretch to container width
+                styles={'width': '100%'}  # Ensure full width
+            )
+            script, div = components(layout)
+        else:
+            script, div = components(p)
 
         # Extract JavaScript
         script_content = re.search(r'<script.*?>(.*?)</script>', script, re.DOTALL)
