@@ -4,29 +4,65 @@ A web-based tool for visualizing and analyzing signal data.
 
 ## Development Roadmap
 
-### Phase 1: Basic Structure & File Handling
-- [x] Set up Flask application structure
-- [x] Implement basic file browser
-  - [x] Directory navigation
-  - [x] Signal file detection
-  - [x] Basic UI with Bootstrap
-- [x] Add "Open Folder" functionality
-- [x] Add navigation controls (up button)
-- [x] Filter for signal folders
+### Phase 1: Essential Plot Controls & Real-time Updates
+- [ ] Plot Layout Controls
+  - [ ] Split/combine traces button in GUI
+  - [ ] Independent y-axes with shared x-axis
+  - [ ] Combine split traces back to single plot
+- [ ] Real-time Updates
+  - [ ] Add refresh button
+  - [ ] File system watcher for auto-refresh
+  - [ ] Visual indicator when data has changed
+- [ ] Basic Axis Controls
+  - [ ] Log/linear scale toggle buttons
+  - [ ] dB scale option
+  - [ ] Grid toggle
 
-### Phase 2: Single Plot Functionality
-- [x] Basic Bokeh plot integration
-  - [x] Single signal display
-  - [x] Basic zoom/pan
-  - [x] Axes labels
-- [x] Signal loading/plotting
-  - [x] Units handling
-  - [x] SI prefix formatting
-- [x] Basic plot interactions
-  - [x] Hover tooltips
-  - [x] Crosshair
+### Phase 2: Complex Data & Advanced Visualization
+- [ ] Complex Signal Support
+  - [ ] Detect and indicate complex data in GUI
+  - [ ] Plot type selector (real, imag, magnitude, phase)
+  - [ ] Phase unwrapping option
+- [ ] Heatmap Support
+  - [ ] Toggle between trace/heatmap for 2D signals
+  - [ ] Colormap selection
+  - [ ] Slider controls for 3D+ signals in heatmap mode
+  - [ ] Heatmap value tooltip/cursor
 
-### Phase 3: Multi-Signal & Advanced Plot Layout
+### Phase 3: Measurement & Analysis Tools
+- [ ] Cursor Tools
+  - [ ] Single point measurement
+  - [ ] Delta measurements (dx, dy)
+  - [ ] Multiple cursors
+- [ ] Statistics
+  - [ ] Basic stats per trace (min, max, mean, std)
+  - [ ] Stats in selected region
+  - [ ] Export measurements
+
+### Phase 4: Advanced Interaction & Layout
+- [ ] Advanced Plot Layout
+  - [ ] Drag & drop traces between plots
+  - [ ] Drop zones for split/combine
+  - [ ] Plot area resize handles
+- [ ] Plot Customization
+  - [ ] Trace color/style editor
+  - [ ] Legend position/style
+  - [ ] Export plot settings
+
+### Phase 5: Additional Features
+- [ ] Session Management
+  - [ ] Save/load session state
+  - [ ] Default configurations
+- [ ] Advanced Analysis
+  - [ ] FFT/spectrum analysis
+  - [ ] Filtering options
+  - [ ] Custom math operations
+- [ ] Plot Types
+  - [ ] Polar plots
+  - [ ] Smith charts
+  - [ ] Histogram/distribution plots
+
+### Completed Features
 - [x] Context Menu for Signal Loading
   - [x] Right-click menu with load options
   - [x] "Add to Current Plot" (overlay)
@@ -35,35 +71,5 @@ A web-based tool for visualizing and analyzing signal data.
   - [x] Plot multiple traces with legend
   - [x] Dimension sliders for n-D data
   - [x] Dimension selection UI
-- [ ] Advanced Plot Layout
-  - [ ] Split view with shared x-axis
-  - [ ] Drag & drop between plots
-  - [ ] Plot area resize handles
-- [ ] Tab Management
-  - [ ] Create/close tabs
-  - [ ] Drag signals between tabs
-  - [ ] Tab naming and organization
-
-### Phase 4: Interactive Features
-- [ ] Signal Management
-  - [ ] Signal visibility toggle
-  - [ ] Color/style customization
-  - [ ] Signal grouping
-- [ ] Plot Enhancements
-  - [ ] Auto-scaling on slider changes
-  - [ ] Multiple y-axes customization
-  - [ ] Plot style presets
-- [ ] Drag & Drop Enhancement
-  - [ ] Drag to overlay
-  - [ ] Drag to split
-  - [ ] Drop zone indicators
-- [ ] Measurements
-  - [ ] Cursor tools
-  - [ ] Delta measurements
-  - [ ] Statistics per dimension
-
-### Misc:
-- right click axes to set log/lin scale, dB etc
-- Save session state?
-- Delete signals from plot
-- Heatmap and other plot types
+- [x] Tab Management
+  - [x] Create/close tabs

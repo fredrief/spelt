@@ -10,7 +10,7 @@ def generate_time_domain_signals(base_path: Path):
     time_path = base_path / "time_domain"
 
     # Basic sine waves with different units
-    t = np.linspace(0, 1, 1000)
+    t = np.linspace(0, 1, 500)
     signals = [
         {
             "name": "voltage_sine",

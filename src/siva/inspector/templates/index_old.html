@@ -44,12 +44,13 @@
                             </button>
                         </li>
                     </ul>
-                    <div class="btn-group">
-                        <button class="btn btn-sm btn-outline-secondary" onclick="splitPlot()">
-                            <i class="bi bi-layout-split"></i> Split
+                    <!-- Plot control buttons -->
+                    <div class="d-flex align-items-center">
+                        <button id="split-traces" class="btn btn-sm btn-outline-secondary me-2">
+                            <i class="bi bi-layout-split"></i> Split Traces
                         </button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="combinePlot()">
-                            <i class="bi bi-layout-join"></i> Combine
+                        <button id="combine-traces" class="btn btn-sm btn-outline-secondary me-2">
+                            <i class="bi bi-layout-join"></i> Combine Traces
                         </button>
                     </div>
                 </div>
@@ -168,6 +169,12 @@ function loadDirectory(path='') {
 // Load initial directory
 loadDirectory();
 
+// Clear plot state when page loads
+fetch('/clear-plot-state').then(() => {
+    // Clear plot container
+    document.getElementById('plot-container').innerHTML = '';
+});
+
 // Context menu handling
 let contextMenuTarget = null;
 
@@ -195,13 +202,223 @@ function selectSignal(element) {
     element.classList.add('signal-selected');
 }
 
-function updatePlot(tabId) {
-    return fetch(`/plot/update?tab_id=${tabId}`)
+// Handle context menu item clicks
+document.getElementById('context-menu').addEventListener('click', (event) => {
+    const action = event.target.closest('.context-menu-item')?.dataset.action;
+    if (!action || !contextMenuTarget) return;
+
+    const path = contextMenuTarget.dataset.path;
+    switch (action) {
+        case 'replace':
+            plotSignal(path, 'replace');
+            break;
+        case 'append':
+            plotSignal(path, 'overlay');
+            break;
+        case 'new-tab':
+            plotSignal(path, 'new-tab');
+            break;
+    }
+    hideContextMenu();
+});
+
+// Hide context menu when clicking outside
+document.addEventListener('click', hideContextMenu);
+
+// Tab management
+let nextTabId = 2;  // Start from 2 since we have tab-1 by default
+
+function createNewTab() {
+    const tabId = nextTabId++;
+
+    // Create tab button
+    const tabButton = document.createElement('li');
+    tabButton.className = 'nav-item';
+    tabButton.role = 'presentation';
+    tabButton.innerHTML = `
+        <button class="nav-link" id="tab-${tabId}" data-bs-toggle="tab" data-bs-target="#plot-${tabId}" type="button" role="tab">
+            Plot ${tabId}
+            <span class="ms-2 close-tab">&times;</span>
+        </button>
+    `;
+
+    // Create tab content
+    const tabContent = document.createElement('div');
+    tabContent.className = 'tab-pane fade';
+    tabContent.id = `plot-${tabId}`;
+    tabContent.role = 'tabpanel';
+    tabContent.innerHTML = `
+        <div class="plot-container">
+            <div class="bokeh-plot"></div>
+        </div>
+    `;
+
+    // Add to DOM
+    document.getElementById('plot-tabs').appendChild(tabButton);
+    document.getElementById('plot-tabs-content').appendChild(tabContent);
+
+    // Add close handler
+    const closeButton = tabButton.querySelector('.close-tab');
+    closeButton.onclick = (event) => closeTab(tabId, event);
+
+    // Show close buttons if we have more than one tab
+    updateCloseButtonVisibility();
+
+    // Activate the new tab
+    const tab = new bootstrap.Tab(document.getElementById(`tab-${tabId}`));
+    tab.show();
+
+    return tabId;
+}
+
+function updateCloseButtonVisibility() {
+    const tabs = document.querySelectorAll('#plot-tabs .nav-item');
+    const hasMultipleTabs = tabs.length > 1;
+    tabs.forEach(tab => {
+        const closeButton = tab.querySelector('.close-tab');
+        if (closeButton) {
+            closeButton.style.display = hasMultipleTabs ? 'inline' : 'none';
+        }
+    });
+}
+
+// Initialize close button for first tab
+document.addEventListener('DOMContentLoaded', function() {
+    const firstTabCloseButton = document.querySelector('#tab-1 .close-tab');
+    if (firstTabCloseButton) {
+        firstTabCloseButton.onclick = (event) => closeTab(1, event);
+    }
+    updateCloseButtonVisibility();
+});
+
+// Update closeTab function to prevent closing the last tab
+function closeTab(tabId, event) {
+    // Prevent event from triggering tab switch
+    event.stopPropagation();
+
+    // Don't close if it's the last tab
+    const tabs = document.querySelectorAll('#plot-tabs .nav-item');
+    if (tabs.length === 1) {
+        return;
+    }
+
+    // Remove tab and its content
+    const tab = document.getElementById(`tab-${tabId}`).parentElement;
+    const tabContent = document.getElementById(`plot-${tabId}`);
+
+    // If this is the active tab, switch to another tab first
+    if (tab.querySelector('.nav-link').classList.contains('active')) {
+        // Find another tab to activate
+        const firstTab = document.querySelector('#plot-tabs .nav-link:not(.active)');
+        if (firstTab) {
+            const bsTab = new bootstrap.Tab(firstTab);
+            bsTab.show();
+        }
+    }
+
+    // Remove the tab and its content
+    tab.remove();
+    tabContent.remove();
+
+    // Update close button visibility
+    updateCloseButtonVisibility();
+
+    // Clear plot state for this tab
+    fetch(`/clear-plot-state?tab_id=${tabId}`);
+}
+
+// Handle split traces button click
+document.getElementById('split-traces').addEventListener('click', function() {
+    const activeTab = document.querySelector('.tab-pane.active');
+    if (!activeTab) return;
+
+    const tabId = activeTab.id.replace('plot-', '');
+
+    fetch(`/split-traces?tab_id=${tabId}`)
         .then(response => response.json())
         .then(data => {
+            if (data.status === 'success') {
+                // Hide split button, show combine button
+                this.style.display = 'none';
+                document.getElementById('combine-traces').style.display = 'block';
+                // Replot the current signal
+                plotSignal(currentSignalPath, 'replace');
+            } else if (data.error) {
+                alert(data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error splitting traces');
+        });
+});
+
+// Handle combine traces button click
+document.getElementById('combine-traces').addEventListener('click', function() {
+    const activeTab = document.querySelector('.tab-pane.active');
+    if (!activeTab) return;
+
+    const tabId = activeTab.id.replace('plot-', '');
+
+    fetch(`/combine-traces?tab_id=${tabId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                // Hide combine button, show split button
+                this.style.display = 'none';
+                document.getElementById('split-traces').style.display = 'block';
+                // Replot the current signal
+                plotSignal(currentSignalPath, 'replace');
+            } else if (data.error) {
+                alert(data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error combining traces');
+        });
+});
+
+// Track current signal path
+let currentSignalPath = '';
+
+// Update plotSignal function to track current signal and update button visibility
+function plotSignal(path, mode = 'replace') {
+    currentSignalPath = path;  // Store current signal path
+    let tabId, plotContainer;
+    let plotMode = mode;
+
+    if (mode === 'new-tab') {
+        tabId = createNewTab();
+        plotContainer = document.querySelector(`#plot-${tabId} .plot-container`);
+        plotMode = 'replace';
+    } else {
+        const activeTab = document.querySelector('.tab-pane.active');
+        tabId = activeTab.id.replace('plot-', '');
+        plotContainer = activeTab.querySelector('.plot-container');
+    }
+
+    if (mode === 'replace' || mode === 'new-tab') {
+        plotContainer.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
+    }
+
+    fetch(`/plot/${path}?mode=${plotMode}&tab_id=${tabId}`)
+        .then(response => {
+            if (!response.ok) {
+                if (response.status === 400 && mode === 'overlay') {
+                    return;
+                }
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (!data) return;
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
             if (data.script && data.div) {
-                const activeTab = document.getElementById(`plot-${tabId}`);
-                const plotContainer = activeTab.querySelector('.plot-container');
                 plotContainer.innerHTML = data.div;
                 const scriptElement = document.createElement('script');
                 scriptElement.type = 'text/javascript';
@@ -211,168 +428,19 @@ function updatePlot(tabId) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert(`Error plotting signal: ${error.message}`);
+            if (mode === 'replace') {
+                plotContainer.innerHTML = `<div class="alert alert-danger">${error.message}</div>`;
+            } else {
+                alert(`Error plotting signal: ${error.message}`);
+            }
         });
 }
 
-// Add this function to handle tab closing
-function closeTab(event) {
-    event.stopPropagation();  // Prevent the tab from being activated
-    const tabButton = event.target.closest('button');
-    const tabId = tabButton.id.replace('tab-', '');
-    const tabContent = document.getElementById(`plot-${tabId}`);
-    const tabNav = tabButton.closest('.nav-item');
-
-    // Call the close_tab endpoint
-    fetch(`/plot/close_tab/${tabId}`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.status === 'success') {
-                // If this is the active tab, activate another tab
-                if (tabButton.classList.contains('active')) {
-                    // Try to activate the previous tab, or the next one if there is no previous
-                    const nextTab = tabNav.nextElementSibling || tabNav.previousElementSibling;
-                    if (nextTab) {
-                        const nextButton = nextTab.querySelector('button');
-                        nextButton.classList.add('active');
-                        document.querySelector(nextButton.dataset.bsTarget).classList.add('active', 'show');
-                    }
-                }
-
-                // Remove the tab and its content
-                tabContent.remove();
-                tabNav.remove();
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert(`Error closing tab: ${error.message}`);
-        });
-}
-
-// Update the createNewTab function to add close handler
-function createNewTab(tabId) {
-    const tabsNav = document.getElementById('plot-tabs');
-    const tabsContent = document.getElementById('plot-tabs-content');
-
-    // Remove active class from current tabs
-    tabsNav.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
-    tabsContent.querySelectorAll('.tab-pane').forEach(pane => {
-        pane.classList.remove('active');
-        pane.classList.remove('show');
-    });
-
-    // Create new tab button
-    const newTab = document.createElement('li');
-    newTab.className = 'nav-item';
-    newTab.setAttribute('role', 'presentation');
-    newTab.innerHTML = `
-        <button class="nav-link active" id="tab-${tabId}" data-bs-toggle="tab"
-                data-bs-target="#plot-${tabId}" type="button" role="tab">
-            Plot ${tabId}
-            <span class="ms-2 close-tab">&times;</span>
-        </button>
-    `;
-
-    // Add close handler
-    newTab.querySelector('.close-tab').addEventListener('click', closeTab);
-
-    // Create new tab content
-    const newContent = document.createElement('div');
-    newContent.className = 'tab-pane fade show active';
-    newContent.id = `plot-${tabId}`;
-    newContent.setAttribute('role', 'tabpanel');
-    newContent.innerHTML = `
-        <div class="plot-container" id="plot-container-${tabId}">
-            <!-- Plot will be inserted here -->
-        </div>
-    `;
-
-    // Add new elements to DOM
-    tabsNav.appendChild(newTab);
-    tabsContent.appendChild(newContent);
-
-    return tabId;
-}
-
-// Add close handler to initial tab
-document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.close-tab').forEach(closeButton => {
-        closeButton.addEventListener('click', closeTab);
+// Update tab switching to handle button visibility
+document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(button => {
+    button.addEventListener('shown.bs.tab', () => {
     });
 });
-
-// Handle context menu item clicks
-document.getElementById('context-menu').addEventListener('click', (event) => {
-    const action = event.target.closest('.context-menu-item')?.dataset.action;
-    if (!action || !contextMenuTarget) return;
-
-    const path = contextMenuTarget.dataset.path;
-    const activeTab = document.querySelector('.tab-pane.active');
-    const tabId = activeTab.id.replace('plot-', '');
-
-    switch (action) {
-        case 'replace':
-            // First call replace endpoint
-            fetch(`/signal/replace/${path}?tab_id=${tabId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(() => updatePlot(tabId))
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error plotting signal: ${error.message}`);
-                });
-            break;
-        case 'append':
-            // First call append endpoint
-            fetch(`/signal/append/${path}?tab_id=${tabId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(() => updatePlot(tabId))
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error plotting signal: ${error.message}`);
-                });
-            break;
-        case 'new-tab':
-            fetch(`/signal/new_tab/${path}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        const newTabId = data.tab_id;
-                        createNewTab(newTabId);
-                        updatePlot(newTabId);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error creating new tab: ${error.message}`);
-                });
-            break;
-    }
-    hideContextMenu();
-});
-
-// Hide context menu when clicking outside
-document.addEventListener('click', hideContextMenu);
 
 // Open folder dialog
 function openFolder() {
@@ -393,46 +461,17 @@ function openFolder() {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    loadDirectory();
+                    // Clear plot state when opening a new folder
+                    fetch('/clear-plot-state').then(() => {
+                        loadDirectory();
+                        // Clear plot container
+                        document.querySelector('.plot-container').innerHTML = '';
+                    });
                 }
             });
         }
     };
     input.click();
-}
-
-function splitPlot() {
-    const activeTab = document.querySelector('.tab-pane.active');
-    const tabId = activeTab.id.replace('plot-', '');
-
-    fetch(`/plot/split?tab_id=${tabId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                updatePlot(tabId);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert(`Error splitting plot: ${error.message}`);
-        });
-}
-
-function combinePlot() {
-    const activeTab = document.querySelector('.tab-pane.active');
-    const tabId = activeTab.id.replace('plot-', '');
-
-    fetch(`/plot/combine?tab_id=${tabId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                updatePlot(tabId);
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert(`Error combining plot: ${error.message}`);
-        });
 }
 </script>
 

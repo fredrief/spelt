@@ -149,7 +149,8 @@ class Signal:
         self,
         data: Union[np.ndarray, List[NumericType]],
         metadata: Optional[Dict[str, Any]] = None,
-        x_data: Optional[Union[np.ndarray, List[NumericType]]] = None
+        x_data: Optional[Union[np.ndarray, List[NumericType]]] = None,
+        path: Optional[Union[str, Path]] = None
     ):
         """Initialize Signal with n-dimensional data."""
         try:
@@ -159,6 +160,9 @@ class Signal:
 
         if 0 in self._data.shape:
             raise ValueError(f"Data cannot have empty dimensions. Shape: {self._data.shape}")
+
+        # Store path if provided
+        self._path = Path(path) if path is not None else None
 
         # Initialize default metadata
         self._metadata = {
@@ -262,6 +266,11 @@ class Signal:
         """Get x-axis data."""
         return self._x_data
 
+    @property
+    def path(self) -> Optional[Path]:
+        """Get path to signal."""
+        return self._path
+
     #################################
     # 3. Data Access & Manipulation #
     #################################
@@ -311,6 +320,110 @@ class Signal:
             new_x_data = self._x_data[kwargs['time']]
 
         return Signal(data=new_data, metadata=new_metadata, x_data=new_x_data)
+
+    def to_1d_signals(self, *slice_args, **kwargs) -> List['Signal']:
+        """Convert n-dimensional signal into a list of 1D signals.
+
+        The first dimension is always preserved as the dimension of the returned 1D signals.
+        For an n-dimensional signal, n-1 slice arguments must be provided.
+        At most one slice argument can be a range (slice object or ':'), others must be integer indices.
+
+        Args:
+            *slice_args: n-1 slice arguments for an n-dimensional signal.
+                        Each argument can be an integer index or slice object.
+                        At most one argument can be a slice object.
+
+        Returns:
+            List of 1D Signal objects
+
+        Raises:
+            ValueError: If number of arguments is incorrect or if more than one range is provided
+        """
+        # If already 1D, return copy of self
+        if self.ndim == 1:
+            return [Signal(self._data.copy(), metadata=self._metadata.copy(), x_data=self._x_data.copy() if self._x_data is not None else None)]
+
+        # Validate number of slice arguments
+        if len(slice_args) != self.ndim - 1:
+            raise ValueError(f"Expected {self.ndim - 1} slice arguments for {self.ndim}D signal, got {len(slice_args)}")
+
+        # Count number of range slices
+        range_count = sum(1 for arg in slice_args if isinstance(arg, (slice, str)) and (isinstance(arg, slice) or arg == ':'))
+        if range_count > 1:
+            raise ValueError("At most one dimension can have a range slice")
+
+        # Convert string ':' to slice(None)
+        slice_args = [slice(None) if isinstance(arg, str) and arg == ':' else arg for arg in slice_args]
+
+        # Create full slice tuple with first dimension always being full range
+        full_slice = (slice(None),) + tuple(slice_args)
+
+        # Get the sliced data
+        sliced_data = self._data[full_slice]
+
+        # Determine which dimension has the range (if any)
+        range_dim = None
+        for i, arg in enumerate(slice_args, start=1):  # start=1 because first dim is always range
+            if isinstance(arg, slice):
+                range_dim = i
+                break
+
+        # Prepare metadata for 1D signals
+        new_metadata = {
+            key: value for key, value in self._metadata.items()
+            if key in {
+                MetadataKeys.UNIT.value,
+                MetadataKeys.X_UNIT.value,
+                MetadataKeys.X_NAME.value,
+                MetadataKeys.X_INTERVAL.value,
+                MetadataKeys.DOMAIN.value
+            }
+        }
+        new_metadata[MetadataKeys.DIMENSIONS.value] = [self._metadata[MetadataKeys.DIMENSIONS.value][0]]
+
+        # Get name suffix
+        name_suffix = kwargs.get('name_suffix', '')
+        # Create list of 1D signals
+        sig_list = []
+        index_tuple_list = []
+        if range_dim is None:
+            # No range dimension besides first, return single 1D signal
+            index_tuple = [slice(None)] + list(slice_args)  # Create as list instead of tuple
+            index_tuple_list.append(index_tuple)  # Store as list
+            sig_list.append(Signal(
+                sliced_data,
+                metadata=new_metadata,
+                x_data=self._x_data.copy() if self._x_data is not None else None,
+                path=self.path
+            ))
+        else:
+            # Split along the range dimension
+            for i in range(sliced_data.shape[range_dim]):
+                # Create index tuple for this slice
+                idx = [slice(None)]  # First dimension is always full range
+                for j, arg in enumerate(slice_args):
+                    if j + 1 == range_dim:  # +1 because we started with slice(None)
+                        idx.append(i)  # Use current index for the range dimension
+                    else:
+                        idx.append(arg)  # Keep original slice/index for other dimensions
+
+                index_tuple_list.append(idx)  # Store as list
+                signal_data = self._data[tuple(idx)]  # Convert to tuple only when indexing
+                # Ensure the data is 1D
+                if signal_data.ndim > 1:
+                    signal_data = signal_data.squeeze()
+
+                # Add name suffix to metadata
+                md = new_metadata.copy()
+                md[MetadataKeys.NAME.value] = f"{self.metadata[MetadataKeys.NAME.value]} {name_suffix}{i}"
+                sig_list.append(Signal(
+                    signal_data,
+                    metadata=md,
+                    x_data=self._x_data.copy() if self._x_data is not None else None,
+                    path=self.path
+                ))
+
+        return sig_list, index_tuple_list
 
     ###########################
     # 4. Arithmetic Operations #
@@ -484,24 +597,35 @@ class Signal:
         """Infer dimension names from data shape."""
         return [f'dim_{i}' for i in range(len(self._data.shape))]
 
-    def save(self, path: Union[str, Path]) -> None:
+    def save(self, path: Optional[Union[str, Path]] = None) -> None:
         """Save signal to disk.
 
         Args:
-            path: Path to directory where signal will be saved
+            path: Optional path to directory where signal will be saved. If not provided,
+                 uses the signal's stored path attribute. At least one must be provided.
+
+        Raises:
+            ValueError: If neither path argument nor path attribute is set
         """
-        path = Path(path)
-        path.mkdir(parents=True, exist_ok=True)
+        # Determine which path to use
+        if path is not None:
+            save_path = Path(path)
+        elif self._path is not None:
+            save_path = self._path
+        else:
+            raise ValueError("No path provided and no path attribute set. Cannot save signal.")
+
+        save_path.mkdir(parents=True, exist_ok=True)
 
         # Create .signal marker file
-        (path / '.signal').touch()
+        (save_path / '.signal').touch()
 
         # Save data
-        np.save(path / 'data.npy', self._data)
+        np.save(save_path / 'data.npy', self._data)
 
         # Save x_data if it exists
         if self._x_data is not None:
-            np.save(path / 'x_data.npy', self._x_data)
+            np.save(save_path / 'x_data.npy', self._x_data)
 
         # Convert Enums to strings for JSON serialization
         metadata_to_save = {}
@@ -511,7 +635,7 @@ class Signal:
             else:
                 metadata_to_save[key] = value
 
-        with open(path / 'metadata.json', 'w') as f:
+        with open(save_path / 'metadata.json', 'w') as f:
             json.dump(metadata_to_save, f)
 
     @classmethod
@@ -562,5 +686,57 @@ class Signal:
                     else:
                         metadata[key] = value
 
-        return cls(data=data, metadata=metadata, x_data=x_data)
+        # Create signal instance with path
+        return cls(data=data, metadata=metadata, x_data=x_data, path=path)
+
+    def __getitem__(self, index_tuple) -> 'Signal':
+        """Get a slice of the signal using numpy-style indexing.
+
+        Args:
+            index_tuple: Index or tuple of indices for slicing
+
+        Returns:
+            New Signal object with sliced data and updated metadata
+        """
+        # Convert list to tuple
+        if isinstance(index_tuple, list):
+            index_tuple = tuple(index_tuple)
+
+        # Convert single index to tuple
+        if not isinstance(index_tuple, tuple):
+            index_tuple = (index_tuple,)
+
+        # Get sliced data
+        new_data = self._data[index_tuple]
+
+        # Create new metadata with updated dimensions
+        new_metadata = self._metadata.copy()
+        old_dims = self._metadata.get(MetadataKeys.DIMENSIONS.value, [])
+        old_dim_units = self._metadata.get(MetadataKeys.DIM_UNITS.value, [])
+
+        # Update dimensions and dimension units based on indexing
+        new_dims = []
+        new_dim_units = []
+        for i, (idx, dim, unit) in enumerate(zip(index_tuple, old_dims, old_dim_units if old_dim_units else [None] * len(old_dims))):
+            if isinstance(idx, slice) or isinstance(idx, np.ndarray):
+                new_dims.append(dim)
+                if unit is not None:
+                    new_dim_units.append(unit)
+
+        # Handle case where index_tuple is shorter than dimensions
+        if len(index_tuple) < len(old_dims):
+            new_dims.extend(old_dims[len(index_tuple):])
+            if old_dim_units:
+                new_dim_units.extend(old_dim_units[len(index_tuple):])
+
+        new_metadata[MetadataKeys.DIMENSIONS.value] = new_dims
+        if old_dim_units:
+            new_metadata[MetadataKeys.DIM_UNITS.value] = new_dim_units
+
+        # Handle x_data if present and first dimension is indexed
+        new_x_data = None
+        if self._x_data is not None:
+            new_x_data = self._x_data[index_tuple[0]]
+
+        return Signal(data=new_data, metadata=new_metadata, x_data=new_x_data, path=self._path)
 
