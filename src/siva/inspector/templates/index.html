@@ -433,6 +433,9 @@ function createNewTab(tabId) {
     tabsNav.appendChild(newTab);
     tabsContent.appendChild(newContent);
 
+    // Ensure the new tab is properly activated
+    switchToTab(tabId);
+
     return tabId;
 }
 
@@ -452,17 +455,18 @@ function getActiveTabId() {
 function plotSignal(action, element) {
     const path = element.dataset.path;
     const representation = element.dataset.selectedRepresentation || 'real';
+    const currentTabId = getActiveTabId();
     let url = '';
 
     switch(action) {
         case 'replace':
-            url = `/signal/replace/${path}?representation=${representation}`;
+            url = `/signal/replace/${path}?representation=${representation}&tab_id=${currentTabId}`;
             break;
         case 'append':
-            url = `/signal/append/${path}?representation=${representation}`;
+            url = `/signal/append/${path}?representation=${representation}&tab_id=${currentTabId}`;
             break;
         case 'new-tab':
-            url = `/signal/new_tab/${path}?representation=${representation}`;
+            url = `/signal/new_tab/${path}?representation=${representation}`;  // No need for tab_id in new tab
             break;
     }
 
@@ -470,12 +474,23 @@ function plotSignal(action, element) {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                if (data.tab_id) {
-                    // If a new tab was created, switch to it
-                    switchToTab(data.tab_id);
+                const tabId = data.tab_id || currentTabId;
+
+                if (action === 'new-tab' && data.tab_id) {
+                    // Create the new tab first
+                    createNewTab(data.tab_id);
+                    // Give the DOM time to update and then update the plot
+                    setTimeout(() => {
+                        const newTab = document.getElementById(`plot-${data.tab_id}`);
+                        if (newTab) {
+                            updatePlot(data.tab_id);
+                        } else {
+                            console.error('New tab was not created properly');
+                        }
+                    }, 100);
+                } else {
+                    updatePlot(tabId);
                 }
-                // Update the plot
-                updatePlot(data.tab_id || getActiveTabId());
             } else {
                 throw new Error(data.error || 'Unknown error');
             }
@@ -533,8 +548,8 @@ function splitPlot() {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                updatePlot(tabId);
-            }
+                    updatePlot(tabId);
+                }
         })
         .catch(error => {
             console.error('Error:', error);
@@ -550,7 +565,7 @@ function combinePlot() {
         .then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                updatePlot(tabId);
+                    updatePlot(tabId);
             }
         })
         .catch(error => {
@@ -585,7 +600,7 @@ function setScale(axis, scale) {
 
     // Update the button text
     const button = event.target.closest('.dropdown').querySelector('.current-scale');
-    button.textContent = scale.charAt(0).toUpperCase() + scale.slice(1);
+            button.textContent = scale.charAt(0).toUpperCase() + scale.slice(1);
 
     // Call backend to update scale
     fetch(`/plot/set_scale/${tabId}?axis=${axis}&scale=${scale}`)
@@ -601,6 +616,23 @@ function setScale(axis, scale) {
             console.error('Error:', error);
             alert(`Error setting ${axis} scale: ${error.message}`);
         });
+}
+
+function switchToTab(tabId) {
+    // Remove active class from all tabs and panes
+    document.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(pane => {
+        pane.classList.remove('active');
+        pane.classList.remove('show');
+    });
+
+    // Activate the new tab and pane
+    const newTab = document.getElementById(`tab-${tabId}`);
+    const newPane = document.getElementById(`plot-${tabId}`);
+    if (newTab && newPane) {
+        newTab.classList.add('active');
+        newPane.classList.add('active', 'show');
+    }
 }
 </script>
 {% endblock %}
