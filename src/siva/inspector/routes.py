@@ -87,7 +87,9 @@ def add_new_plot(tab_state):
     tab_state['n_plots'] += 1
     tab_state['sub_plots'][f'plot_{plot_id}'] = {
         'signals': [],
-        'position': plot_id # New plots are added to the end
+        'position': plot_id, # New plots are added to the end
+        'x_scale': 'linear',  # Default x scale
+        'y_scale': 'linear'   # Default y scale
     }
     session.modified = True
     return tab_state['sub_plots'][f'plot_{plot_id}']
@@ -335,13 +337,26 @@ def update_plot():
         # Create base tools without hover
         tools = get_tools()
 
+        # Get scale settings from plot state
+        x_scale = plot_state.get('x_scale', 'linear')
+        y_scale = plot_state.get('y_scale', 'linear')
+
         p = figure(
             height=calculate_plot_height(n_plots),  # Smaller height for sub plots
             sizing_mode='stretch_width',
             x_range=x_range,  # Use shared x range
             tools=tools,
             toolbar_location='above' if position == 0 else None,
+            x_axis_type=x_scale,
+            y_axis_type=y_scale
         )
+
+        # For log scale, ensure positive ranges
+        if x_scale == 'log':
+            if isinstance(x_range, Range1d):
+                x_range.start = max(1e-10, x_range.start)
+        if y_scale == 'log':
+            p.y_range.start = max(1e-10, p.y_range.start or 1e-10)
 
         # Initialize extra y ranges dictionary
         p.extra_y_ranges = {}
@@ -677,5 +692,25 @@ def deserialize_index(idx):
     if isinstance(idx, dict) and idx.get('type') == 'slice':
         return slice(idx['start'], idx['stop'], idx['step'])
     return idx
+
+@bp.route('/plot/set_scale/<int:tab_id>')
+def set_scale(tab_id):
+    """Set the scale for an axis in a plot."""
+    axis = request.args.get('axis')
+    scale = request.args.get('scale')
+
+    if axis not in ['x', 'y']:
+        return jsonify({'error': 'Invalid axis'}), 400
+    if scale not in ['linear', 'log']:
+        return jsonify({'error': 'Invalid scale'}), 400
+
+    tab_state = get_tab(str(tab_id))
+
+    # Update scale for all plots in the tab
+    for plot_state in tab_state['sub_plots'].values():
+        plot_state[f'{axis}_scale'] = scale
+
+    session.modified = True
+    return jsonify({'status': 'success'})
 
 

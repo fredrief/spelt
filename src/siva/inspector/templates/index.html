@@ -55,6 +55,26 @@
                             <i class="bi bi-layout-join"></i> Combine
                         </button>
                     </div>
+                    <div class="btn-group ms-3">
+                        <div class="dropdown d-inline-block me-2">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                X Scale: <span class="current-scale">Linear</span>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="setScale('x', 'linear')">Linear</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="setScale('x', 'log')">Log</a></li>
+                            </ul>
+                        </div>
+                        <div class="dropdown d-inline-block">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                Y Scale: <span class="current-scale">Linear</span>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="setScale('y', 'linear')">Linear</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="setScale('y', 'log')">Log</a></li>
+                            </ul>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="card-body">
@@ -557,5 +577,30 @@ document.addEventListener('click', function(event) {
         signalElement.dataset.selectedRepresentation = representation;
     }
 });
+
+// Add this JavaScript function after the other functions
+function setScale(axis, scale) {
+    const activeTab = document.querySelector('.tab-pane.active');
+    const tabId = activeTab.id.replace('plot-', '');
+
+    // Update the button text
+    const button = event.target.closest('.dropdown').querySelector('.current-scale');
+    button.textContent = scale.charAt(0).toUpperCase() + scale.slice(1);
+
+    // Call backend to update scale
+    fetch(`/plot/set_scale/${tabId}?axis=${axis}&scale=${scale}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                updatePlot(tabId);
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert(`Error setting ${axis} scale: ${error.message}`);
+        });
+}
 </script>
 {% endblock %}
