@@ -236,6 +236,43 @@ class Signal:
         """Get signal data."""
         return self._data.copy()
 
+    @data.setter
+    def data(self, value: Union[np.ndarray, List[NumericType]]) -> None:
+        """Set signal data.
+
+        Args:
+            value: New data array or list that can be converted to numpy array
+
+        Raises:
+            TypeError: If data cannot be converted to numpy array
+            ValueError: If data has empty dimensions
+        """
+        try:
+            new_data = np.asarray(value)
+        except Exception as e:
+            raise TypeError(f"Data must be convertible to numpy array: {str(e)}")
+
+        if 0 in new_data.shape:
+            raise ValueError(f"Data cannot have empty dimensions. Shape: {new_data.shape}")
+
+        # Update data
+        self._data = new_data
+
+        # Update dimensions in metadata if shape changed
+        if self._data.shape != new_data.shape:
+            self._metadata[MetadataKeys.DIMENSIONS.value] = self._infer_dimensions()
+            # Remove dimension units if they exist since they may no longer be valid
+            if MetadataKeys.DIM_UNITS.value in self._metadata:
+                del self._metadata[MetadataKeys.DIM_UNITS.value]
+
+        # Update x_data if needed
+        if self._x_data is not None and self._x_data.shape[0] != new_data.shape[0]:
+            self._x_data = None
+            # Reset sampling type since x_data is gone
+            self._metadata[MetadataKeys.SAMPLING_TYPE.value] = SamplingType.UNDEFINED.value
+            if MetadataKeys.X_INTERVAL.value in self._metadata:
+                del self._metadata[MetadataKeys.X_INTERVAL.value]
+
     @property
     def domain(self) -> SignalDomain:
         """Get signal domain as enum."""

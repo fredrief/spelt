@@ -20,10 +20,12 @@ from .js_snippets import FORMAT_WITH_PREFIX, ZOOM_KEY_HANDLER, SLIDER_UPDATE_CAL
 
 bp = Blueprint('main', __name__)
 
-def serialize_signal(signal: Signal) -> dict:
+def serialize_signal(signal: Signal, representation: str) -> dict:
     """Convert Signal to JSON serializable format."""
     serialized = {}
     serialized['path'] = str(signal.path.relative_to(current_app.config['ROOT_DIR']))
+
+    # First copy all metadata
     for key, value in signal.metadata.items():
         if isinstance(value, Enum):
             serialized[key] = value.value
@@ -31,6 +33,19 @@ def serialize_signal(signal: Signal) -> dict:
             serialized[key] = [item.value if isinstance(item, Enum) else item for item in value]
         else:
             serialized[key] = value
+
+    # Handle name for complex signals
+    if signal.data.dtype.kind == 'c':
+        base_name = signal.metadata.get(MetadataKeys.NAME.value, '')
+        rep_prefix = {
+            'real': 'real',
+            'imaginary': 'imag',
+            'magnitude': 'mag',
+            'phase': 'phase'
+        }.get(representation, 'real')  # Default to 'real' if representation not recognized
+        serialized[MetadataKeys.NAME.value] = f"{rep_prefix}({base_name})"
+
+    serialized['representation'] = representation
     return serialized
 
 def create_new_tab():
@@ -80,27 +95,27 @@ def add_new_plot(tab_state):
 def get_plot_state(tab_state, plot_id):
     return tab_state['sub_plots'][f'plot_{plot_id}']
 
-def add_signal_to_plot(plot_state, signal: Signal):
+def add_signal_to_plot(plot_state, signal: Signal, representation: str):
     """Adds a signal to the plot.
 
     For 2D signals, converts them to multiple 1D signals.
     For 1D signals, adds them directly.
     For 3D signals, adds slider for third dimension and converts to multiple 1D signals.
     """
-    # Check if signal is already in the plot
+    # Check if signal is already in the plot with same representation
     signal_path = str(signal.path)
     for signal_dict in plot_state['signals']:
-        if signal_dict['path'] in signal_path:
+        if signal_dict['path'] in signal_path and signal_dict.get('representation') == representation:
             return plot_state
 
     if signal.ndim == 1:
         # For 1D signals, add directly
-        plot_state['signals'].append(serialize_signal(signal))
+        plot_state['signals'].append(serialize_signal(signal, representation))
     elif signal.ndim == 2:
         # For 2D signals, convert to list of 1D signals
         signals_1d, index_tuple_list = signal.to_1d_signals(slice(None))
         for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d)
+            serialized = serialize_signal(sig_1d, representation)
             serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
             plot_state['signals'].append(serialized)
     elif signal.ndim == 3:
@@ -118,7 +133,7 @@ def add_signal_to_plot(plot_state, signal: Signal):
         # Convert to 1D signals using current slider value (0 initially)
         signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), 0)
         for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d)
+            serialized = serialize_signal(sig_1d, representation)
             serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
             plot_state['signals'].append(serialized)
     else:
@@ -126,7 +141,7 @@ def add_signal_to_plot(plot_state, signal: Signal):
         slice_args = [slice(None), slice(None)] + [0] * (signal.ndim - 2)
         signals_1d, index_tuple_list = signal.to_1d_signals(*slice_args[1:])
         for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d)
+            serialized = serialize_signal(sig_1d, representation)
             serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
             plot_state['signals'].append(serialized)
 
@@ -155,8 +170,20 @@ def get_signals(tab_id, plot_id=None, return_as_dict=False):
                     if 'index_tuple' in signal_dict:
                         index_tuple = [deserialize_index(idx) for idx in signal_dict['index_tuple']]
                         signal = signal[index_tuple]
+                    if 'representation' in signal_dict:
+                        # Handle different signal representations
+                        representation = signal_dict['representation']
+                        if representation == 'real':
+                            signal.data = np.real(signal.data)
+                        elif representation == 'imaginary':
+                            signal.data = np.imag(signal.data)
+                        elif representation == 'magnitude':
+                            signal.data = np.abs(signal.data)
+                        elif representation == 'phase':
+                            signal.data = np.angle(signal.data)
                     if 'name' in signal_dict:
                         signal = signal.set_metadata('name', signal_dict['name'])
+
                     signals.append(signal)
     return signals
 
@@ -229,11 +256,26 @@ def browse(subpath=''):
                 is_signal = (p / '.signal').exists()
 
                 if has_signals or is_signal:
-                    items.append({
+                    item_data = {
                         'name': p.name,
                         'type': 'signal' if is_signal else 'folder',
                         'path': str(p.relative_to(current_app.config['ROOT_DIR']))
-                    })
+                    }
+
+                    # If it's a signal, load it to get properties
+                    if is_signal:
+                        try:
+                            signal = Signal.load(p)
+                            item_data.update({
+                                'ndim': signal.ndim,
+                                'is_complex': signal.data.dtype.kind == 'c'
+                            })
+                        except Exception as e:
+                            print(f"Error loading signal {p}: {e}")
+                            # Still include the signal, just without properties
+                            pass
+
+                    items.append(item_data)
 
         return jsonify({
             'items': items,
@@ -343,7 +385,7 @@ def update_plot():
                 color = colors[color_index % len(colors)]
 
                 # Create data source with correct y field name
-                source_data = {'x': x_data, 'y': np.real(y_data)}
+                source_data = {'x': x_data, 'y': y_data}
                 source = ColumnDataSource(source_data)
 
                 # Create hover tool specific to this line
@@ -407,11 +449,12 @@ def update_plot():
                     args=dict(
                         signal_path=str(Path(signal_path).relative_to(current_app.config['ROOT_DIR'])),
                         plot_id=plot_id,
-                        tab_id=tab_id
+                        tab_id=tab_id,
+                        representation=plot_state['signals'][0].get('representation', 'real')  # Get representation from first signal
                     ),
                     code="""
                     // Send the new slice index to the server
-                    fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}`)
+                    fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}&representation=${representation}`)
                         .then(response => response.json())
                         .then(data => {
                             if (data.status === 'success') {
@@ -459,9 +502,12 @@ def update_plot():
     })
 
 
+
+
 @bp.route('/signal/replace/<path:signal_path>')
 def replace(signal_path):
     tab_id = request.args.get('tab_id', '1')  # Default to first tab
+    representation = request.args.get('representation', 'real')
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
     if not (full_path / '.signal').exists():
@@ -471,7 +517,7 @@ def replace(signal_path):
     signal = Signal.load(full_path)
     tab_state = reset_tab(tab_id)
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal)
+    add_signal_to_plot(plot_state, signal, representation)
 
     return jsonify({'status': 'success'})
 
@@ -479,6 +525,7 @@ def replace(signal_path):
 @bp.route('/signal/append/<path:signal_path>')
 def append(signal_path):
     tab_id = request.args.get('tab_id', '1')  # Default to first tab
+    representation = request.args.get('representation', 'real')
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
     if not (full_path / '.signal').exists():
@@ -492,13 +539,14 @@ def append(signal_path):
         plot_state = add_new_plot(tab_state)
     else:
         plot_state = get_plot_state(tab_state, tab_state['n_plots'] - 1)
-    add_signal_to_plot(plot_state, signal)
+    add_signal_to_plot(plot_state, signal, representation)
 
     return jsonify({'status': 'success'})
 
 @bp.route('/signal/new_tab/<path:signal_path>')
 def new_tab(signal_path):
     # Plot signal in new tab
+    representation = request.args.get('representation', 'real')
     tab_id = create_new_tab()
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
@@ -510,11 +558,9 @@ def new_tab(signal_path):
     tab_state = get_tab(tab_id)
     # By default, add signal to last plot
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal)
+    add_signal_to_plot(plot_state, signal, representation)
 
     return jsonify({'status': 'success', 'tab_id': tab_id})
-
-
 
 @bp.route('/plot/close_tab/<int:tab_id>')
 def close_tab(tab_id):
@@ -533,6 +579,7 @@ def update_slice(signal_path):
     """Update the slice index for a 3D signal"""
     tab_id = request.args.get('tab_id')
     plot_id = request.args.get('plot_id')
+    representation = request.args.get('representation', 'real')
     # Extract plot_id as int if it starts with "plot_"
     if isinstance(plot_id, str) and plot_id.startswith('plot_'):
         plot_id = int(plot_id[5:])  # Remove "plot_" prefix and convert to int
@@ -562,7 +609,7 @@ def update_slice(signal_path):
         # Add new signals with updated slice
         signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), slice_index)
         for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d)
+            serialized = serialize_signal(sig_1d, representation)
             serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
             plot_state['signals'].append(serialized)
 

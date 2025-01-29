@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 
+{% block head %}
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <!-- File Browser -->
@@ -84,6 +87,82 @@
     </div>
 </div>
 
+<style>
+    .context-menu-item {
+        cursor: pointer;
+        padding: 0.5rem 1rem;
+        white-space: nowrap;
+    }
+
+    .context-menu-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    .signal-selected {
+        background-color: #e9ecef;
+    }
+
+    .close-tab {
+        cursor: pointer;
+        opacity: 0.5;
+    }
+
+    .close-tab:hover {
+        opacity: 1;
+    }
+
+    .nav-link .close-tab {
+        display: inline;
+    }
+
+    .nav-link:not(:only-child) .close-tab {
+        display: inline;
+    }
+
+    .signal-representation .dropdown-menu {
+        min-width: 120px;
+    }
+
+    .signal-representation .btn:hover,
+    .signal-representation .btn:focus {
+        opacity: 0.7;
+    }
+
+    .badge {
+        font-size: 0.7em;
+    }
+
+    .signal-representation .btn {
+        color: var(--bs-primary);
+    }
+
+    .signal-representation .text-muted {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .signal-representation .dropdown-menu .math {
+        font-size: 1.2em;
+        padding: 0 0.5em;
+    }
+
+    .signal-representation .btn .math {
+        font-size: 1.1em;
+        color: var(--bs-primary);
+    }
+
+    .signal-representation .text-muted .math {
+        opacity: 0.5;
+        cursor: default;
+    }
+
+    .signal-representation .math {
+        font-family: "Times New Roman", serif;
+        font-size: 1.2em;
+        padding: 0 0.5em;
+    }
+</style>
+
 <script>
 let currentPath = '';
 
@@ -133,9 +212,41 @@ function loadDirectory(path='') {
                 <div class="d-flex align-items-center p-2 border-bottom"
                      data-path="${item.path}"
                      data-type="${item.type}"
+                     data-ndim="${item.ndim || ''}"
+                     data-is-complex="${item.is_complex || false}"
                      style="cursor: pointer">
                     <i class="bi ${item.type === 'signal' ? 'bi-graph-up' : 'bi-folder'} me-2"></i>
                     <span>${item.name}</span>
+                    ${item.type === 'signal' ? `
+                        <div class="ms-auto d-flex align-items-center">
+                            <span class="badge bg-secondary me-2">${item.ndim}D</span>
+                            <div class="signal-representation">
+                                ${item.is_complex ? `
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-link p-0 me-2" type="button" data-bs-toggle="dropdown">
+                                            <span class="math">ℜ</span>
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item" href="#" data-representation="real" data-symbol="ℜ">
+                                                <span class="math">ℜ</span>
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" data-representation="imaginary" data-symbol="ℑ">
+                                                <span class="math">ℑ</span>
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" data-representation="magnitude" data-symbol="∥z∥">
+                                                <span class="math">∥z∥</span>
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" data-representation="phase" data-symbol="∠z">
+                                                <span class="math">∠z</span>
+                                            </a></li>
+                                        </ul>
+                                    </div>
+                                ` : `
+                                    <span class="math text-muted">ℜ</span>
+                                `}
+                            </div>
+                        </div>
+                    ` : ''}
                 </div>
             `).join('');
 
@@ -157,6 +268,11 @@ function loadDirectory(path='') {
                     });
                 }
             });
+
+            // After setting innerHTML, trigger MathJax
+            if (window.MathJax) {
+                MathJax.typesetPromise().catch((err) => console.log('MathJax error:', err));
+            }
         })
         .catch(error => {
             console.error('Error:', error);
@@ -307,68 +423,56 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Handle context menu item clicks
-document.getElementById('context-menu').addEventListener('click', (event) => {
-    const action = event.target.closest('.context-menu-item')?.dataset.action;
-    if (!action || !contextMenuTarget) return;
-
-    const path = contextMenuTarget.dataset.path;
+// Add this function before plotSignal
+function getActiveTabId() {
     const activeTab = document.querySelector('.tab-pane.active');
-    const tabId = activeTab.id.replace('plot-', '');
+    return activeTab ? activeTab.id.replace('plot-', '') : '1';
+}
 
-    switch (action) {
+function plotSignal(action, element) {
+    const path = element.dataset.path;
+    const representation = element.dataset.selectedRepresentation || 'real';
+    let url = '';
+
+    switch(action) {
         case 'replace':
-            // First call replace endpoint
-            fetch(`/signal/replace/${path}?tab_id=${tabId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(() => updatePlot(tabId))
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error plotting signal: ${error.message}`);
-                });
+            url = `/signal/replace/${path}?representation=${representation}`;
             break;
         case 'append':
-            // First call append endpoint
-            fetch(`/signal/append/${path}?tab_id=${tabId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(() => updatePlot(tabId))
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error plotting signal: ${error.message}`);
-                });
+            url = `/signal/append/${path}?representation=${representation}`;
             break;
         case 'new-tab':
-            fetch(`/signal/new_tab/${path}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        const newTabId = data.tab_id;
-                        createNewTab(newTabId);
-                        updatePlot(newTabId);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert(`Error creating new tab: ${error.message}`);
-                });
+            url = `/signal/new_tab/${path}?representation=${representation}`;
             break;
     }
-    hideContextMenu();
+
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                if (data.tab_id) {
+                    // If a new tab was created, switch to it
+                    switchToTab(data.tab_id);
+                }
+                // Update the plot
+                updatePlot(data.tab_id || getActiveTabId());
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert(`Error plotting signal: ${error.message}`);
+        });
+}
+
+// Modify the context menu click handler
+document.getElementById('context-menu').addEventListener('click', function(event) {
+    const action = event.target.closest('.context-menu-item')?.dataset.action;
+    if (action && contextMenuTarget) {
+        plotSignal(action, contextMenuTarget);
+        hideContextMenu();
+    }
 });
 
 // Hide context menu when clicking outside
@@ -434,38 +538,24 @@ function combinePlot() {
             alert(`Error combining plot: ${error.message}`);
         });
 }
+
+// Update the representation selection handler
+document.addEventListener('click', function(event) {
+    if (event.target.matches('.signal-representation .dropdown-item') ||
+        event.target.closest('.signal-representation .dropdown-item')) {
+        event.preventDefault();
+        const item = event.target.closest('.dropdown-item');
+        const representation = item.dataset.representation;
+        const symbol = item.dataset.symbol;
+        const signalElement = item.closest('[data-path]');
+        const button = signalElement.querySelector('.signal-representation button');
+
+        // Update the symbol
+        button.innerHTML = `<span class="math">${symbol}</span>`;
+
+        // Store the selected representation in the element's data
+        signalElement.dataset.selectedRepresentation = representation;
+    }
+});
 </script>
-
-<style>
-.context-menu-item {
-    cursor: pointer;
-    padding: 0.5rem 1rem;
-    white-space: nowrap;
-}
-
-.context-menu-item:hover {
-    background-color: #f8f9fa;
-}
-
-.signal-selected {
-    background-color: #e9ecef;
-}
-
-.close-tab {
-    cursor: pointer;
-    opacity: 0.5;
-}
-
-.close-tab:hover {
-    opacity: 1;
-}
-
-.nav-link .close-tab {
-    display: inline;
-}
-
-.nav-link:not(:only-child) .close-tab {
-    display: inline;
-}
-</style>
 {% endblock %}
