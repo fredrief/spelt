@@ -1,6 +1,6 @@
 # Spelt
 
-Spend less time plotting.
+Spend Less Time Plotting.
 
 ## Requirements
 
