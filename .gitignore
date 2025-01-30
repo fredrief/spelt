@@ -174,3 +174,4 @@ cython_debug/
 .pylintrc
 
 trash/
+test_data/
