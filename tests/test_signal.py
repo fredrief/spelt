@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from siva.signal import (
+from spelt.signal import (
     Signal, SignalDomain, SamplingType, MetadataKeys,
     MetadataValidation, MetadataValidator
 )

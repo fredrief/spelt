@@ -1,9 +1,9 @@
 [project]
-name = "siva"
+name = "spelt"
 version = "0.1.0"
-description = "Signal Visualization and Analysis"
+description = "Spend Less Time Plotting"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Fredrik Feyling", email = "fredrik.e.feyling@ntnu.no"},
 ]
 dependencies = [
     "flask",
@@ -20,7 +20,7 @@ dev = [
 ]
 
 [project.scripts]
-siva-inspect = "siva.inspector.cli:main"
+spelt-inspect = "spelt.inspector.cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -2,7 +2,7 @@
 
 import numpy as np
 from pathlib import Path
-from siva.signal import Signal, MetadataKeys, SignalDomain, SamplingType
+from spelt.signal import Signal, MetadataKeys, SignalDomain, SamplingType
 import json
 
 def generate_time_domain_signals(base_path: Path):

@@ -14,7 +14,7 @@ from bokeh.models import (
 from bokeh.layouts import column
 from bokeh.palettes import Category10
 import re
-from siva.signal import Signal, MetadataKeys, SignalDomain, SamplingType
+from spelt.signal import Signal, MetadataKeys, SignalDomain, SamplingType
 from enum import Enum
 from .js_snippets import FORMAT_WITH_PREFIX, ZOOM_KEY_HANDLER, SLIDER_UPDATE_CALLBACK
 
