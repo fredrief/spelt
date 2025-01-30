@@ -75,6 +75,14 @@
                             </ul>
                         </div>
                     </div>
+                    <div class="btn-group ms-3" data-heatmap-controls style="display: none;">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">Range:</span>
+                            <input type="number" class="form-control" id="color-min" style="width: 80px;" placeholder="Min">
+                            <input type="number" class="form-control" id="color-max" style="width: 80px;" placeholder="Max">
+                            <button class="btn btn-outline-secondary" onclick="updateColorRange()">Apply</button>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="card-body">
@@ -519,15 +527,36 @@ function getActiveTabId() {
 }
 
 function updateControlsVisibility(plotType) {
-            // Get all elements marked as line-plot-only controls
-            const lineOnlyControls = document.querySelectorAll('[data-line-plot-controls]');
-            lineOnlyControls.forEach(control => {
-                if (plotType === 'heatmap') {
-                    control.style.display = 'none';
-                } else {
-                    control.style.display = '';
-                }
-            });
+    // Update existing controls visibility
+    const lineOnlyControls = document.querySelectorAll('[data-line-plot-controls]');
+    const heatmapControls = document.querySelectorAll('[data-heatmap-controls]');
+
+    if (plotType === 'heatmap') {
+        lineOnlyControls.forEach(control => control.style.display = 'none');
+        heatmapControls.forEach(control => control.style.display = '');
+    } else {
+        lineOnlyControls.forEach(control => control.style.display = '');
+        heatmapControls.forEach(control => control.style.display = 'none');
+    }
+}
+
+function updateColorRange() {
+    const activeTab = document.querySelector('.tab-pane.active');
+    const tabId = activeTab.id.replace('plot-', '');
+    const minVal = document.getElementById('color-min').value;
+    const maxVal = document.getElementById('color-max').value;
+
+    fetch(`/plot/set_color_range/${tabId}?min=${minVal}&max=${maxVal}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                updatePlot(tabId);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert(`Error updating color range: ${error.message}`);
+        });
 }
 
 function plotSignal(action, element) {

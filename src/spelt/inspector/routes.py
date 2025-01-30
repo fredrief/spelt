@@ -216,7 +216,8 @@ def find_x_range(signals: List[Signal]):
 
     # Handle case where no valid signals were found
     if x_min == float('inf'):
-        return None
+        x_min = 0
+        x_max = max(len(signal.data) for signal in signals)
     return Range1d(start=x_min - (x_max - x_min) * 0.05,
                                    end=x_max + (x_max - x_min) * 0.05)
 
@@ -356,8 +357,13 @@ def update_heatmap_plot(tab_id):
     # Get data and dimensions
     data = signal.data
 
-    # Create color mapper
-    mapper = LinearColorMapper(palette="Viridis256", low=np.min(data), high=np.max(data))
+    # Get color range from tab state
+    color_range = tab_state.get('color_range', {})
+    color_min = color_range.get('min', np.min(data))
+    color_max = color_range.get('max', np.max(data))
+
+    # Create color mapper with custom range
+    mapper = LinearColorMapper(palette="Viridis256", low=color_min, high=color_max)
 
     # Create heatmap
     p.image(
@@ -477,6 +483,9 @@ def update_line_plot(tab_id):
         # Create base tools without hover
         tools = get_tools()
 
+        # only show legends and hover if less than 10 signals in plot
+        SHOW_LEGENDS = len(signals_in_plot) <= 10
+
         # Get scale settings from plot state
         x_scale = plot_state.get('x_scale', 'linear')
         y_scale = plot_state.get('y_scale', 'linear')
@@ -544,30 +553,33 @@ def update_line_plot(tab_id):
                 source = ColumnDataSource(source_data)
 
                 # Create hover tool specific to this line
-                hover = HoverTool(
-                    tooltips=[
-                        ('x', '@x{custom}'),
-                        (unit if unit else 'Value', '@y{custom}')
-                    ],
-                    formatters={
-                        '@x': CustomJSHover(code=FORMAT_WITH_PREFIX),
-                        '@y': CustomJSHover(code=FORMAT_WITH_PREFIX)
-                    },
-                    mode='vline',
-                    renderers=[] # Will be set after line is created
-                )
+                if SHOW_LEGENDS:
+                    hover = HoverTool(
+                            tooltips=[
+                                ('x', '@x{custom}'),
+                            (unit if unit else 'Value', '@y{custom}')
+                        ],
+                        formatters={
+                            '@x': CustomJSHover(code=FORMAT_WITH_PREFIX),
+                            '@y': CustomJSHover(code=FORMAT_WITH_PREFIX)
+                        },
+                        mode='vline',
+                        renderers=[] # Will be set after line is created
+                    )
 
-                # Plot line with appropriate y range
-                if i == 0:
-                    line = p.line('x', 'y', source=source, line_width=2, color=color,
-                              legend_label=legend)
+                    # Plot line with appropriate y range
+                    if i == 0:
+                        line = p.line('x', 'y', source=source, line_width=2, color=color,
+                                legend_label=legend)
+                    else:
+                        line = p.line('x', 'y', source=source, line_width=2, color=color,
+                                legend_label=legend, y_range_name=f'y{i}')
+
+                    # Add line to hover tool's renderers
+                    hover.renderers = [line]
+                    p.add_tools(hover)
                 else:
-                    line = p.line('x', 'y', source=source, line_width=2, color=color,
-                              legend_label=legend, y_range_name=f'y{i}')
-
-                # Add line to hover tool's renderers
-                hover.renderers = [line]
-                p.add_tools(hover)
+                    line = p.line('x', 'y', source=source, line_width=2, color=color)
 
                 color_index += 1
 
@@ -622,9 +634,10 @@ def update_line_plot(tab_id):
                 slider.js_on_change('value', callback)
                 sliders.append(slider)
 
-        p.legend.click_policy = "hide"
-        p.legend.location = "top_right"
-        p.legend.background_fill_alpha = 0.7
+        if SHOW_LEGENDS:
+            p.legend.click_policy = "hide"
+            p.legend.location = "top_right"
+            p.legend.background_fill_alpha = 0.7
 
         plots[position] = p
 
@@ -867,6 +880,24 @@ def set_scale(tab_id):
     # Update scale for all plots in the tab
     for plot_state in tab_state['sub_plots'].values():
         plot_state[f'{axis}_scale'] = scale
+
+    session.modified = True
+    return jsonify({'status': 'success'})
+
+@bp.route('/plot/set_color_range/<int:tab_id>')
+def set_color_range(tab_id):
+    """Set the color range for heatmap."""
+    min_val = request.args.get('min', type=float)
+    max_val = request.args.get('max', type=float)
+
+    tab_state = get_tab(str(tab_id))
+    if 'color_range' not in tab_state:
+        tab_state['color_range'] = {}
+
+    if min_val is not None:
+        tab_state['color_range']['min'] = min_val
+    if max_val is not None:
+        tab_state['color_range']['max'] = max_val
 
     session.modified = True
     return jsonify({'status': 'success'})

@@ -657,7 +657,17 @@ class Signal:
         else:
             raise ValueError("No path provided and no path attribute set. Cannot save signal.")
 
-        save_path.mkdir(parents=True, exist_ok=True)
+        # Create directories and .signals.json files
+        parts = save_path.parts
+        current_path = Path(parts[0])
+        for part in parts[1:]:
+            current_path = current_path / part
+            if not current_path.exists():
+                current_path.mkdir(parents=False, exist_ok=True)
+                signals_file = current_path / '.signals.json'
+                if not signals_file.exists():
+                    with open(signals_file, 'w') as f:
+                        json.dump({}, f)
 
         # Create .signal marker file
         (save_path / '.signal').touch()
