@@ -9,7 +9,7 @@ from bokeh.resources import CDN
 from bokeh.models import (
     ColumnDataSource, HoverTool, CrosshairTool, CustomJSHover,
     LinearAxis, Range1d, Slider, Column, CustomJS,
-    PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool, Button
+    PanTool, WheelZoomTool, BoxZoomTool, ResetTool, SaveTool, Button, LinearColorMapper, ColorBar
 )
 from bokeh.layouts import column
 from bokeh.palettes import Category10
@@ -20,7 +20,7 @@ from .js_snippets import FORMAT_WITH_PREFIX, ZOOM_KEY_HANDLER, SLIDER_UPDATE_CAL
 
 bp = Blueprint('main', __name__)
 
-def serialize_signal(signal: Signal, representation: str) -> dict:
+def serialize_signal(signal: Signal, representation: str, plot_type: str = 'line') -> dict:
     """Convert Signal to JSON serializable format."""
     serialized = {}
     serialized['path'] = str(signal.path.relative_to(current_app.config['ROOT_DIR']))
@@ -34,6 +34,11 @@ def serialize_signal(signal: Signal, representation: str) -> dict:
         else:
             serialized[key] = value
 
+    # For heatmap, preserve 2D structure
+    if plot_type == 'heatmap' and signal.ndim >= 2:
+        serialized['data_2d'] = True
+        return serialized
+
     # Handle name for complex signals
     if signal.data.dtype.kind == 'c':
         base_name = signal.metadata.get(MetadataKeys.NAME.value, '')
@@ -42,7 +47,7 @@ def serialize_signal(signal: Signal, representation: str) -> dict:
             'imaginary': 'imag',
             'magnitude': 'mag',
             'phase': 'phase'
-        }.get(representation, 'real')  # Default to 'real' if representation not recognized
+        }.get(representation, 'real')
         serialized[MetadataKeys.NAME.value] = f"{rep_prefix}({base_name})"
 
     serialized['representation'] = representation
@@ -68,7 +73,8 @@ def reset_tab(tab_id):
     tab_id = str(tab_id)
     session['tabs'][tab_id] = {
         'sub_plots': {},
-        'n_plots': 0
+        'n_plots': 0,
+        'plot_type': 'line'  # Default to line plot
     }
     session.modified = True
     return session['tabs'][tab_id]
@@ -97,55 +103,61 @@ def add_new_plot(tab_state):
 def get_plot_state(tab_state, plot_id):
     return tab_state['sub_plots'][f'plot_{plot_id}']
 
-def add_signal_to_plot(plot_state, signal: Signal, representation: str):
-    """Adds a signal to the plot.
-
-    For 2D signals, converts them to multiple 1D signals.
-    For 1D signals, adds them directly.
-    For 3D signals, adds slider for third dimension and converts to multiple 1D signals.
-    """
+def add_signal_to_plot(plot_state, signal: Signal, representation: str, plot_type: str = 'line'):
+    """Adds a signal to the plot."""
     # Check if signal is already in the plot with same representation
     signal_path = str(signal.path)
     for signal_dict in plot_state['signals']:
         if signal_dict['path'] in signal_path and signal_dict.get('representation') == representation:
             return plot_state
 
-    if signal.ndim == 1:
-        # For 1D signals, add directly
-        plot_state['signals'].append(serialize_signal(signal, representation))
-    elif signal.ndim == 2:
-        # For 2D signals, convert to list of 1D signals
-        signals_1d, index_tuple_list = signal.to_1d_signals(slice(None))
-        for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d, representation)
-            serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+    if plot_type == 'heatmap':
+        if signal.ndim == 2:
+            # For heatmap, add the signal directly with 2D data
+            plot_state['signals'].append(serialize_signal(signal, representation, plot_type='heatmap'))
+        elif signal.ndim == 3:
+            # Initialize slider state if not exists
+            if 'sliders' not in plot_state:
+                plot_state['sliders'] = {}
+            # Add slider for third dimension
+            plot_state['sliders'][signal_path] = {
+                'current_index': 0,
+                'dimension_size': signal.shape[2],
+                'dimension_name': signal.dimensions[2] if len(signal.dimensions) > 2 else 'dim_2'
+            }
+            signal_2d = signal[:, :, 0] # Initially first index
+            serialized = serialize_signal(signal_2d, representation, plot_type='heatmap')
+            serialized['index'] = 0
             plot_state['signals'].append(serialized)
-    elif signal.ndim == 3:
-        # Initialize slider state if not exists
-        if 'sliders' not in plot_state:
-            plot_state['sliders'] = {}
+    elif plot_type == 'line':
+        if signal.ndim == 1:
+            # For 1D signals, add directly
+            plot_state['signals'].append(serialize_signal(signal, representation, plot_type='line'))
+        elif signal.ndim == 2:
+            # For 2D signals in line mode, convert to list of 1D signals
+            signals_1d, index_tuple_list = signal.to_1d_signals(slice(None))
+            for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
+                serialized = serialize_signal(sig_1d, representation, plot_type='line')
+                serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+                plot_state['signals'].append(serialized)
+        elif signal.ndim == 3:
+            # Initialize slider state if not exists
+            if 'sliders' not in plot_state:
+                plot_state['sliders'] = {}
 
-        # Add slider for third dimension
-        plot_state['sliders'][signal_path] = {
-            'current_index': 0,
-            'dimension_size': signal.shape[2],  # Size of third dimension
-            'dimension_name': signal.dimensions[2] if len(signal.dimensions) > 2 else 'dim_2'
-        }
+            # Add slider for third dimension
+            plot_state['sliders'][signal_path] = {
+                'current_index': 0,
+                'dimension_size': signal.shape[2],
+                'dimension_name': signal.dimensions[2] if len(signal.dimensions) > 2 else 'dim_2'
+            }
 
-        # Convert to 1D signals using current slider value (0 initially)
-        signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), 0)
-        for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d, representation)
-            serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
-            plot_state['signals'].append(serialized)
-    else:
-        # For 4D+ signals, take first slice of extra dimensions
-        slice_args = [slice(None), slice(None)] + [0] * (signal.ndim - 2)
-        signals_1d, index_tuple_list = signal.to_1d_signals(*slice_args[1:])
-        for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d, representation)
-            serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
-            plot_state['signals'].append(serialized)
+            # Convert to 1D signals using current slider value (0 initially)
+            signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), 0)
+            for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
+                serialized = serialize_signal(sig_1d, representation, plot_type='line')
+                serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+                plot_state['signals'].append(serialized)
 
     session.modified = True
     return plot_state
@@ -172,6 +184,8 @@ def get_signals(tab_id, plot_id=None, return_as_dict=False):
                     if 'index_tuple' in signal_dict:
                         index_tuple = [deserialize_index(idx) for idx in signal_dict['index_tuple']]
                         signal = signal[index_tuple]
+                    elif signal_dict.get('data_2d', False) and 'index' in signal_dict:
+                        signal = signal[:, :, signal_dict['index']]
                     if 'representation' in signal_dict:
                         # Handle different signal representations
                         representation = signal_dict['representation']
@@ -309,7 +323,133 @@ def set_root():
 @bp.route('/plot/update')
 def update_plot():
     tab_id = request.args.get('tab_id', '1')
-    # Create new figure
+
+    tab_state = get_tab(tab_id)
+    plot_type = tab_state.get('plot_type', 'line')
+
+    if plot_type == 'heatmap':
+        return update_heatmap_plot(tab_id)
+    else:
+        return update_line_plot(tab_id)
+
+def update_heatmap_plot(tab_id):
+    """Create heatmap plot for 2D/3D signals."""
+    tab_state = get_tab(tab_id)
+    plot_state = get_plot_state(tab_state, 0)
+    signals = get_signals(tab_id)
+    # Get the first signal (heatmap mode only supports one signal)
+    if not signals:
+        return jsonify({'error': 'No signals to plot'}), 400
+
+    # Create figure
+    p = figure(
+        height=600,
+        sizing_mode='stretch_width',
+        toolbar_location='above',
+        tools=get_tools()
+    )
+
+    # Configure axes
+    p.grid.grid_line_color = None
+
+    signal = signals[0]
+    # Get data and dimensions
+    data = signal.data
+
+    # Create color mapper
+    mapper = LinearColorMapper(palette="Viridis256", low=np.min(data), high=np.max(data))
+
+    # Create heatmap
+    p.image(
+        image=[data],
+        x=0,
+        y=0,
+        dw=data.shape[1],
+        dh=data.shape[0],
+        color_mapper=mapper
+    )
+
+    # Add colorbar
+    color_bar = ColorBar(
+        color_mapper=mapper,
+        label_standoff=12,
+        border_line_color=None,
+        location=(0, 0)
+    )
+    p.add_layout(color_bar, 'right')
+
+    # Configure axes with dim units if applicable
+    dim_units = signal.dim_units
+    if len(dim_units) == 2:
+        p.xaxis.axis_label = dim_units[0]
+        p.yaxis.axis_label = dim_units[1]
+
+    # Set plot title to sigal name if available
+    if signal.metadata.get(MetadataKeys.NAME.value, None):
+        p.title.text = signal.metadata.get(MetadataKeys.NAME.value, '')
+
+    # Add sliders for 3D signals
+    sliders = []
+    if 'sliders' in plot_state:
+        for signal_path, slider_state in plot_state['sliders'].items():
+            # Add slider for third dimension
+            slider = Slider(
+                    start=0,
+                    end=slider_state['dimension_size'] - 1,
+                    value=slider_state['current_index'],
+                    step=1,
+                    title=f"{slider_state['dimension_name']} Index",
+                    sizing_mode='stretch_width'
+                )
+
+            # Create callback to update plot when slider changes
+            callback = CustomJS(
+                    args=dict(
+                        signal_path=str(Path(signal_path).relative_to(current_app.config['ROOT_DIR'])),
+                        plot_id='plot_0',
+                        tab_id=tab_id,
+                        representation=plot_state['signals'][0].get('representation', 'real')
+                    ),
+                    code="""
+                    // Send the new slice index to the server
+                    fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}&representation=${representation}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                // Trigger plot update
+                                window.updatePlot(tab_id);
+                            }
+                        });
+                    """
+                )
+            slider.js_on_change('value', callback)
+            sliders.append(slider)
+
+    if sliders:
+        layout = column(
+            *sliders,
+            p,
+            sizing_mode='stretch_width',
+            styles={'width': '100%'}
+        )
+    else:
+        layout = p
+
+    script, div = components(layout)
+
+    # Extract JavaScript
+    script_content = re.search(r'<script.*?>(.*?)</script>', script, re.DOTALL)
+    if script_content:
+        script = script_content.group(1)
+
+    return jsonify({
+        'script': script,
+        'div': div,
+        'status': 'success'
+    })
+
+def update_line_plot(tab_id):
+    """Create line plot for 1D signals or 2D/3D signals in line mode."""
     signals = get_signals(tab_id)
     x_range = find_x_range(signals)
 
@@ -465,7 +605,7 @@ def update_plot():
                         signal_path=str(Path(signal_path).relative_to(current_app.config['ROOT_DIR'])),
                         plot_id=plot_id,
                         tab_id=tab_id,
-                        representation=plot_state['signals'][0].get('representation', 'real')  # Get representation from first signal
+                        representation=plot_state['signals'][0].get('representation', 'real')
                     ),
                     code="""
                     // Send the new slice index to the server
@@ -516,13 +656,12 @@ def update_plot():
         'status': 'success'
     })
 
-
-
-
 @bp.route('/signal/replace/<path:signal_path>')
 def replace(signal_path):
-    tab_id = request.args.get('tab_id', '1')  # Default to first tab
+    tab_id = request.args.get('tab_id', '1')
     representation = request.args.get('representation', 'real')
+    plot_type = request.args.get('plot_type', 'line')
+
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
     if not (full_path / '.signal').exists():
@@ -531,16 +670,25 @@ def replace(signal_path):
     # Load signal
     signal = Signal.load(full_path)
     tab_state = reset_tab(tab_id)
+    tab_state['plot_type'] = plot_type  # Set plot type for the tab
+    session.modified = True
+
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal, representation)
+    add_signal_to_plot(plot_state, signal, representation, plot_type)
 
     return jsonify({'status': 'success'})
 
 
 @bp.route('/signal/append/<path:signal_path>')
 def append(signal_path):
-    tab_id = request.args.get('tab_id', '1')  # Default to first tab
+    tab_id = request.args.get('tab_id', '1')
     representation = request.args.get('representation', 'real')
+
+    # Get tab state and check plot type
+    tab_state = get_tab(tab_id)
+    if tab_state['plot_type'] == 'heatmap':
+        return jsonify({'error': 'Cannot append to heatmap plot'}), 400
+
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
     if not (full_path / '.signal').exists():
@@ -548,13 +696,12 @@ def append(signal_path):
 
     # Load signal
     signal = Signal.load(full_path)
-    tab_state = get_tab(tab_id)
     # Add new plot if none exist, otherwise use last plot
     if tab_state['n_plots'] == 0:
         plot_state = add_new_plot(tab_state)
     else:
         plot_state = get_plot_state(tab_state, tab_state['n_plots'] - 1)
-    add_signal_to_plot(plot_state, signal, representation)
+    add_signal_to_plot(plot_state, signal, representation, 'line')
 
     return jsonify({'status': 'success'})
 
@@ -562,7 +709,9 @@ def append(signal_path):
 def new_tab(signal_path):
     # Plot signal in new tab
     representation = request.args.get('representation', 'real')
+    plot_type = request.args.get('plot_type', 'line')
     tab_id = create_new_tab()
+
     # Get full path
     full_path = current_app.config['ROOT_DIR'] / signal_path
     if not (full_path / '.signal').exists():
@@ -571,9 +720,10 @@ def new_tab(signal_path):
     # Load signal
     signal = Signal.load(full_path)
     tab_state = get_tab(tab_id)
+    tab_state['plot_type'] = plot_type  # Set plot type for the tab
     # By default, add signal to last plot
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal, representation)
+    add_signal_to_plot(plot_state, signal, representation, plot_type)
 
     return jsonify({'status': 'success', 'tab_id': tab_id})
 
@@ -607,6 +757,7 @@ def update_slice(signal_path):
     # Get the plot state
     tab_state = get_tab(tab_id)
     plot_state = get_plot_state(tab_state, plot_id)
+    plot_type = tab_state.get('plot_type', 'line')
 
     # Update slider state
     slider_state = find_slider_state(plot_state, signal_path)
@@ -622,11 +773,18 @@ def update_slice(signal_path):
                                if s['path'] != signal_path]
 
         # Add new signals with updated slice
-        signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), slice_index)
-        for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-            serialized = serialize_signal(sig_1d, representation)
-            serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+        if plot_type == 'heatmap':
+            # For heatmap, add the signal directly with 2D data
+            serialized = serialize_signal(signal, representation, plot_type='heatmap')
+            serialized['index'] = slice_index
             plot_state['signals'].append(serialized)
+        else:
+            # For line plot, convert to 1D signals
+            signals_1d, index_tuple_list = signal.to_1d_signals(slice(None), slice_index)
+            for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
+                serialized = serialize_signal(sig_1d, representation, plot_type='line')
+                serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+                plot_state['signals'].append(serialized)
 
         session.modified = True
         return jsonify({'status': 'success'})

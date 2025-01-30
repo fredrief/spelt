@@ -47,7 +47,7 @@
                             </button>
                         </li>
                     </ul>
-                    <div class="btn-group">
+                    <div class="btn-group" data-line-plot-controls>
                         <button class="btn btn-sm btn-outline-secondary" onclick="splitPlot()">
                             <i class="bi bi-layout-split"></i> Split
                         </button>
@@ -55,7 +55,7 @@
                             <i class="bi bi-layout-join"></i> Combine
                         </button>
                     </div>
-                    <div class="btn-group ms-3">
+                    <div class="btn-group ms-3" data-line-plot-controls>
                         <div class="dropdown d-inline-block me-2">
                             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
                                 X Scale: <span class="current-scale">Linear</span>
@@ -99,7 +99,7 @@
     <div class="context-menu-item" data-action="replace">
         <i class="bi bi-arrow-repeat me-2"></i>Replace
     </div>
-    <div class="context-menu-item" data-action="append">
+    <div class="context-menu-item append-option" data-action="append">
         <i class="bi bi-plus-circle me-2"></i>Append
     </div>
     <div class="context-menu-item" data-action="new-tab">
@@ -181,6 +181,39 @@
         font-size: 1.2em;
         padding: 0 0.5em;
     }
+
+    .plot-type-selector {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    .plot-type-selector button {
+        color: var(--bs-primary);
+        opacity: 0.7;
+        transition: opacity 0.2s;
+    }
+
+    .plot-type-selector button:hover:not(.disabled) {
+        opacity: 1;
+    }
+
+    .plot-type-selector button.disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .plot-type-selector .dropdown-menu {
+        min-width: 120px;
+    }
+
+    .plot-type-selector .dropdown-item.active {
+        background-color: rgba(var(--bs-primary-rgb), 0.15);
+        color: var(--bs-primary);
+    }
+
+    .plot-type-selector .dropdown-item:hover {
+        background-color: rgba(var(--bs-primary-rgb), 0.1);
+    }
 </style>
 
 <script>
@@ -240,6 +273,27 @@ function loadDirectory(path='') {
                     ${item.type === 'signal' ? `
                         <div class="ms-auto d-flex align-items-center">
                             <span class="badge bg-secondary me-2">${item.ndim}D</span>
+                            <div class="plot-type-selector me-2">
+                                ${item.ndim <= 1 ? `
+                                    <button class="btn btn-sm btn-link p-0 disabled" type="button">
+                                        <i class="bi bi-graph-up"></i>
+                                    </button>
+                                ` : `
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-link p-0" type="button" data-bs-toggle="dropdown">
+                                            <i class="bi bi-graph-up"></i>
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item active" href="#" data-plot-type="line">
+                                                <i class="bi bi-graph-up me-2"></i>Line Plot
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" data-plot-type="heatmap">
+                                                <i class="bi bi-grid-3x3 me-2"></i>Heatmap
+                                            </a></li>
+                                        </ul>
+                                    </div>
+                                `}
+                            </div>
                             <div class="signal-representation">
                                 ${item.is_complex ? `
                                     <div class="dropdown">
@@ -314,6 +368,11 @@ function showContextMenu(event, element) {
     contextMenu.style.left = `${event.pageX}px`;
     contextMenu.style.top = `${event.pageY}px`;
     contextMenuTarget = element;
+
+    // Show/hide append option based on plot type
+    const plotType = element.dataset.plotType || 'line';
+    const appendOption = contextMenu.querySelector('.append-option');
+    appendOption.style.display = plotType === 'heatmap' ? 'none' : 'block';
 }
 
 function hideContextMenu() {
@@ -376,7 +435,11 @@ function closeTab(event) {
                     if (nextTab) {
                         const nextButton = nextTab.querySelector('button');
                         nextButton.classList.add('active');
+                        const nextTabId = nextButton.id.replace('tab-', '');
                         document.querySelector(nextButton.dataset.bsTarget).classList.add('active', 'show');
+
+                        // Request plot update for the newly activated tab
+                        updatePlot(nextTabId);
                     }
                 }
 
@@ -436,6 +499,9 @@ function createNewTab(tabId) {
     // Ensure the new tab is properly activated
     switchToTab(tabId);
 
+    // Initialize controls visibility (default to line plot)
+    updateControlsVisibility('line');
+
     return tabId;
 }
 
@@ -452,21 +518,40 @@ function getActiveTabId() {
     return activeTab ? activeTab.id.replace('plot-', '') : '1';
 }
 
+function updateControlsVisibility(plotType) {
+            // Get all elements marked as line-plot-only controls
+            const lineOnlyControls = document.querySelectorAll('[data-line-plot-controls]');
+            lineOnlyControls.forEach(control => {
+                if (plotType === 'heatmap') {
+                    control.style.display = 'none';
+                } else {
+                    control.style.display = '';
+                }
+            });
+}
+
 function plotSignal(action, element) {
     const path = element.dataset.path;
     const representation = element.dataset.selectedRepresentation || 'real';
+    const plotType = element.dataset.plotType || 'line';
     const currentTabId = getActiveTabId();
     let url = '';
 
     switch(action) {
         case 'replace':
-            url = `/signal/replace/${path}?representation=${representation}&tab_id=${currentTabId}`;
+            url = `/signal/replace/${path}?representation=${representation}&plot_type=${plotType}&tab_id=${currentTabId}`;
+            // Update controls visibility based on plot type
+            updateControlsVisibility(plotType);
             break;
         case 'append':
             url = `/signal/append/${path}?representation=${representation}&tab_id=${currentTabId}`;
+            // Update controls visibility based on plot type
+            updateControlsVisibility(plotType);
             break;
         case 'new-tab':
-            url = `/signal/new_tab/${path}?representation=${representation}`;  // No need for tab_id in new tab
+            url = `/signal/new_tab/${path}?representation=${representation}&plot_type=${plotType}`;  // No need for tab_id in new tab
+            // Update controls visibility based on plot type
+            updateControlsVisibility(plotType);
             break;
     }
 
@@ -634,5 +719,39 @@ function switchToTab(tabId) {
         newPane.classList.add('active', 'show');
     }
 }
+
+function togglePlotType(signalElement, newType) {
+    // Update the button icon
+    const button = signalElement.querySelector('.plot-type-selector button');
+    const icon = newType === 'line' ? 'bi-graph-up' : 'bi-grid-3x3';
+    button.innerHTML = `<i class="bi ${icon}"></i>`;
+
+    // Update dropdown items active state
+    const dropdownItems = signalElement.querySelectorAll('.plot-type-selector .dropdown-item');
+    dropdownItems.forEach(item => {
+        item.classList.toggle('active', item.dataset.plotType === newType);
+    });
+
+    signalElement.dataset.plotType = newType;
+
+    // Update context menu state if it's visible
+    const contextMenu = document.getElementById('context-menu');
+    if (contextMenu.style.display !== 'none') {
+        const appendOption = contextMenu.querySelector('.append-option');
+        appendOption.style.display = newType === 'heatmap' ? 'none' : 'block';
+    }
+}
+
+// Add click handler for plot type selection
+document.addEventListener('click', function(event) {
+    const plotTypeItem = event.target.closest('.plot-type-selector .dropdown-item');
+    if (plotTypeItem) {
+        event.preventDefault();
+        event.stopPropagation();
+        const signalElement = plotTypeItem.closest('[data-path]');
+        const newType = plotTypeItem.dataset.plotType;
+        togglePlotType(signalElement, newType);
+    }
+});
 </script>
 {% endblock %}

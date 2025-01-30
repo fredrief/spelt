@@ -308,6 +308,11 @@ class Signal:
         """Get path to signal."""
         return self._path
 
+    @property
+    def dim_units(self) -> List[str]:
+        """Get list of dimension units."""
+        return self._metadata.get(MetadataKeys.DIM_UNITS.value, [])
+
     #################################
     # 3. Data Access & Manipulation #
     #################################
