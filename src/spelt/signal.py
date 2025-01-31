@@ -96,11 +96,11 @@ class MetadataValidation:
     # Validation rules for each metadata key
     RULES = {
         MetadataKeys.SAMPLING_TYPE: MetadataValidator(
-            validator=is_valid_sampling_type,
+            validator=lambda x: MetadataValidation.is_valid_sampling_type(x),
             error_msg="Sampling type must be a valid SamplingType value"
         ),
         MetadataKeys.UNIT: MetadataValidator(
-            validator=is_valid_unit,
+            validator=lambda x: MetadataValidation.is_valid_unit(x),
             error_msg="Invalid unit specification"
         ),
         MetadataKeys.NAME: MetadataValidator(
@@ -108,15 +108,15 @@ class MetadataValidation:
             error_msg="Name must be a string"
         ),
         MetadataKeys.X_UNIT: MetadataValidator(
-            validator=is_valid_unit,
+            validator=lambda x: MetadataValidation.is_valid_unit(x),
             error_msg="Invalid x-axis unit specification"
         ),
         MetadataKeys.X_INTERVAL: MetadataValidator(
-            validator=is_positive_number,
+            validator=lambda x: MetadataValidation.is_positive_number(x),
             error_msg="X interval must be a positive number"
         ),
         MetadataKeys.DIMENSIONS: MetadataValidator(
-            validator=is_valid_dimension_list,
+            validator=lambda x: MetadataValidation.is_valid_dimension_list(x),
             error_msg="Dimensions must be a list of strings"
         ),
         MetadataKeys.DIM_UNITS: MetadataValidator(
@@ -124,7 +124,7 @@ class MetadataValidation:
             error_msg="Dimension units must be a list of valid unit specifications"
         ),
         MetadataKeys.DOMAIN: MetadataValidator(
-            validator=is_valid_domain,
+            validator=lambda x: MetadataValidation.is_valid_domain(x),
             error_msg="Domain must be a valid SignalDomain value"
         )
     }
@@ -148,9 +148,9 @@ class Signal:
     def __init__(
         self,
         data: Union[np.ndarray, List[NumericType]],
-        metadata: Optional[Dict[str, Any]] = None,
         x_data: Optional[Union[np.ndarray, List[NumericType]]] = None,
-        path: Optional[Union[str, Path]] = None
+        path: Optional[Union[str, Path]] = None,
+        **metadata
     ):
         """Initialize Signal with n-dimensional data."""
         try:
@@ -657,7 +657,7 @@ class Signal:
 
         # Create directories and .signals.json files
         parts = save_path.parts
-        for i in range(1, len(parts)+1):
+        for i in range(1, len(parts)):
             path_str = '/'.join(parts[:i])
             current_path = Path(path_str)
             if not current_path.exists():
@@ -737,7 +737,7 @@ class Signal:
                         metadata[key] = value
 
         # Create signal instance with path
-        return cls(data=data, metadata=metadata, x_data=x_data, path=path)
+        return cls(data=data, x_data=x_data, path=path, **metadata)
 
     def __getitem__(self, index_tuple) -> 'Signal':
         """Get a slice of the signal using numpy-style indexing.

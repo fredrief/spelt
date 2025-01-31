@@ -246,7 +246,7 @@ def index():
     session['tabs'] = {}
     session['n_tabs'] = 1
     if not 'ROOT_DIR' in session:
-        session['ROOT_DIR'] = current_app.config.get('DEFAULT_ROOT_DIR', str(Path.home()))
+        session['ROOT_DIR'] = current_app.config.get('DEFAULT_ROOT_DIR', str(Path.cwd()))
     reset_tab('1')
     return render_template('index.html')
 
@@ -255,15 +255,21 @@ def index():
 def browse(subpath=''):
     """Browse directory contents."""
     try:
-        # Get full path and ensure it exists
-        full_path = Path(session['ROOT_DIR']) / subpath
+        # Get absolute path of root directory
+        root_dir = Path(session['ROOT_DIR']).resolve()
+
+        # Get full absolute path and ensure it exists
+        full_path = (root_dir / subpath).resolve()
         if not full_path.exists():
             return jsonify({'error': 'Directory not found'}), 404
 
-        # Get parent path (now using absolute path)
+        # Get parent path relative to root
         parent_path = None
         if subpath:
-            parent_path = str(full_path.parent.relative_to(Path(session['ROOT_DIR'])))
+            try:
+                parent_path = str(full_path.parent.relative_to(root_dir))
+            except ValueError:
+                parent_path = None
 
         # List directory contents
         items = []
@@ -276,31 +282,33 @@ def browse(subpath=''):
                 is_signal = (p / '.signal').exists()
 
                 if has_signals or is_signal:
-                    item_data = {
-                        'name': p.name,
-                        'type': 'signal' if is_signal else 'folder',
-                        'path': str(p.relative_to(Path(session['ROOT_DIR']))),
-                        'absolute_path': str(p)  # Add absolute path
-                    }
+                    try:
+                        # Use absolute paths for signal loading
+                        item_data = {
+                            'name': p.name,
+                            'type': 'signal' if is_signal else 'folder',
+                            'path': str(p.relative_to(root_dir)),
+                        }
 
-                    # If it's a signal, load it to get properties
-                    if is_signal:
-                        try:
-                            signal = Signal.load(p)
+                        # If it's a signal, load it to get properties
+                        if is_signal:
+                            signal = Signal.load(p)  # Use absolute path
                             item_data.update({
                                 'ndim': signal.ndim,
                                 'is_complex': signal.data.dtype.kind == 'c',
                                 'description': signal.metadata.get(MetadataKeys.DESCRIPTION.value, '')
                             })
-                        except Exception as e:
-                            print(f"Error loading signal {p}: {e}")
-                            pass
-
-                    items.append(item_data)
+                        items.append(item_data)
+                    except Exception as e:
+                        import traceback
+                        print(f"Error processing path {p}: {e}")
+                        print("Traceback:")
+                        print(traceback.format_exc())
+                        continue
 
         return jsonify({
             'items': items,
-            'current_path': str(full_path),  # Return absolute path
+            'current_path': str(full_path),
             'parent_path': parent_path,
             'is_root': not bool(subpath)
         })
