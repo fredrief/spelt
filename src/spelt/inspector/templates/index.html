@@ -16,9 +16,6 @@
                         </button>
                         File Explorer
                     </div>
-                    <button class="btn btn-sm btn-primary" onclick="openFolder()">
-                        Open Folder
-                    </button>
                 </div>
                 <div id="current-path" class="small text-muted mt-1"></div>
             </div>
@@ -98,9 +95,6 @@
         </div>
     </div>
 </div>
-
-<!-- Hidden file input -->
-<input type="file" id="folder-input" webkitdirectory directory style="display: none">
 
 <!-- Context Menu -->
 <div id="context-menu" class="position-fixed bg-white border rounded shadow p-2" style="display: none; z-index: 1000;">
@@ -275,7 +269,9 @@ function loadDirectory(path='') {
                      data-type="${item.type}"
                      data-ndim="${item.ndim || ''}"
                      data-is-complex="${item.is_complex || false}"
-                     style="cursor: pointer">
+                     style="cursor: pointer"
+                     title="${item.description || ''}"
+                >
                     <i class="bi ${item.type === 'signal' ? 'bi-graph-up' : 'bi-folder'} me-2"></i>
                     <span>${item.name}</span>
                     ${item.type === 'signal' ? `
@@ -626,33 +622,6 @@ document.getElementById('context-menu').addEventListener('click', function(event
 
 // Hide context menu when clicking outside
 document.addEventListener('click', hideContextMenu);
-
-// Open folder dialog
-function openFolder() {
-    const input = document.getElementById('folder-input');
-    input.onchange = function() {
-        if (this.files.length > 0) {
-            // Get the parent directory of the first file
-            const filePath = this.files[0].path;
-            const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
-
-            fetch('/set-root', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ path: folderPath })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    loadDirectory();
-                }
-            });
-        }
-    };
-    input.click();
-}
 
 function splitPlot() {
     const activeTab = document.querySelector('.tab-pane.active');

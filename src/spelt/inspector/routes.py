@@ -23,7 +23,7 @@ bp = Blueprint('main', __name__)
 def serialize_signal(signal: Signal, representation: str, plot_type: str = 'line') -> dict:
     """Convert Signal to JSON serializable format."""
     serialized = {}
-    serialized['path'] = str(signal.path.relative_to(current_app.config['ROOT_DIR']))
+    serialized['path'] = str(signal.path.relative_to(Path(session['ROOT_DIR'])))
 
     # First copy all metadata
     for key, value in signal.metadata.items():
@@ -180,7 +180,7 @@ def get_signals(tab_id, plot_id=None, return_as_dict=False):
                     signals.append(signal_dict)
                 else:
                     signal_path = signal_dict['path']
-                    signal = Signal.load(current_app.config['ROOT_DIR'] / signal_path)
+                    signal = Signal.load(Path(session['ROOT_DIR']) / signal_path)
                     if 'index_tuple' in signal_dict:
                         index_tuple = [deserialize_index(idx) for idx in signal_dict['index_tuple']]
                         signal = signal[index_tuple]
@@ -242,9 +242,11 @@ def get_tools(units_list=None):
 @bp.route('/')
 def index():
     """Render main page."""
-    # Initialize tabs state if not exists
+    # Initialize session state
     session['tabs'] = {}
     session['n_tabs'] = 1
+    if not 'ROOT_DIR' in session:
+        session['ROOT_DIR'] = current_app.config.get('DEFAULT_ROOT_DIR', str(Path.home()))
     reset_tab('1')
     return render_template('index.html')
 
@@ -254,19 +256,20 @@ def browse(subpath=''):
     """Browse directory contents."""
     try:
         # Get full path and ensure it exists
-        full_path = current_app.config['ROOT_DIR'] / subpath
+        full_path = Path(session['ROOT_DIR']) / subpath
         if not full_path.exists():
             return jsonify({'error': 'Directory not found'}), 404
 
-        # Get parent path (relative to root)
+        # Get parent path (now using absolute path)
         parent_path = None
         if subpath:
-            rel_parent = Path(subpath).parent
-            parent_path = str(rel_parent) if str(rel_parent) != '.' else ''
+            parent_path = str(full_path.parent.relative_to(Path(session['ROOT_DIR'])))
 
         # List directory contents
         items = []
         for p in full_path.iterdir():
+            if p.name.startswith('.'):
+                continue
             if p.is_dir():
                 # Check if directory contains signals or has signal metadata
                 has_signals = (p / '.signals.json').exists()
@@ -276,7 +279,8 @@ def browse(subpath=''):
                     item_data = {
                         'name': p.name,
                         'type': 'signal' if is_signal else 'folder',
-                        'path': str(p.relative_to(current_app.config['ROOT_DIR']))
+                        'path': str(p.relative_to(Path(session['ROOT_DIR']))),
+                        'absolute_path': str(p)  # Add absolute path
                     }
 
                     # If it's a signal, load it to get properties
@@ -285,40 +289,24 @@ def browse(subpath=''):
                             signal = Signal.load(p)
                             item_data.update({
                                 'ndim': signal.ndim,
-                                'is_complex': signal.data.dtype.kind == 'c'
+                                'is_complex': signal.data.dtype.kind == 'c',
+                                'description': signal.metadata.get(MetadataKeys.DESCRIPTION.value, '')
                             })
                         except Exception as e:
                             print(f"Error loading signal {p}: {e}")
-                            # Still include the signal, just without properties
                             pass
 
                     items.append(item_data)
 
         return jsonify({
             'items': items,
-            'current_path': subpath or '',
+            'current_path': str(full_path),  # Return absolute path
             'parent_path': parent_path,
             'is_root': not bool(subpath)
         })
 
     except Exception as e:
         print(f"Error browsing directory: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@bp.route('/set-root', methods=['POST'])
-def set_root():
-    """Set root directory."""
-    try:
-        new_root = Path(request.json['path'])
-        if not new_root.exists() or not new_root.is_dir():
-            return jsonify({'error': 'Invalid directory'}), 400
-
-        current_app.config['ROOT_DIR'] = new_root
-        print(f"Set root directory to: {new_root}")  # For debugging
-        return jsonify({'success': True, 'path': str(new_root)})
-
-    except Exception as e:
-        print(f"Error setting root: {e}")  # For debugging
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/plot/update')
@@ -411,7 +399,7 @@ def update_heatmap_plot(tab_id):
             # Create callback to update plot when slider changes
             callback = CustomJS(
                     args=dict(
-                        signal_path=str(Path(signal_path).relative_to(current_app.config['ROOT_DIR'])),
+                        signal_path=str(Path(signal_path).relative_to(Path(session['ROOT_DIR']))),
                         plot_id='plot_0',
                         tab_id=tab_id,
                         representation=plot_state['signals'][0].get('representation', 'real')
@@ -614,7 +602,7 @@ def update_line_plot(tab_id):
                 # Create callback to update plot when slider changes
                 callback = CustomJS(
                     args=dict(
-                        signal_path=str(Path(signal_path).relative_to(current_app.config['ROOT_DIR'])),
+                        signal_path=str(Path(signal_path).relative_to(Path(session['ROOT_DIR']))),
                         plot_id=plot_id,
                         tab_id=tab_id,
                         representation=plot_state['signals'][0].get('representation', 'real')
@@ -676,7 +664,7 @@ def replace(signal_path):
     plot_type = request.args.get('plot_type', 'line')
 
     # Get full path
-    full_path = current_app.config['ROOT_DIR'] / signal_path
+    full_path = Path(session['ROOT_DIR']) / signal_path
     if not (full_path / '.signal').exists():
         return jsonify({'error': 'Not a signal directory'}), 400
 
@@ -703,7 +691,7 @@ def append(signal_path):
         return jsonify({'error': 'Cannot append to heatmap plot'}), 400
 
     # Get full path
-    full_path = current_app.config['ROOT_DIR'] / signal_path
+    full_path = Path(session['ROOT_DIR']) / signal_path
     if not (full_path / '.signal').exists():
         return jsonify({'error': 'Not a signal directory'}), 400
 
@@ -726,7 +714,7 @@ def new_tab(signal_path):
     tab_id = create_new_tab()
 
     # Get full path
-    full_path = current_app.config['ROOT_DIR'] / signal_path
+    full_path = Path(session['ROOT_DIR']) / signal_path
     if not (full_path / '.signal').exists():
         return jsonify({'error': 'Not a signal directory'}), 400
 
@@ -778,7 +766,7 @@ def update_slice(signal_path):
         slider_state['current_index'] = slice_index
 
         # Load the signal
-        full_path = current_app.config['ROOT_DIR'] / signal_path
+        full_path = Path(session['ROOT_DIR']) / signal_path
         signal = Signal.load(full_path)
 
         # Remove old signals for this path

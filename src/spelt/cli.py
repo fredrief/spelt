@@ -12,7 +12,7 @@ def inspect(directory=None):
 
     # Create and configure the Flask app
     app = create_app()
-    app.config['ROOT_DIR'] = root_dir
+    app.config['DEFAULT_ROOT_DIR'] = str(root_dir)
 
     # Run the app
     app.run(debug=True)

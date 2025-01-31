@@ -201,10 +201,8 @@ class Signal:
 
     def __repr__(self) -> str:
         """Return string representation."""
-        domain = self._metadata[MetadataKeys.DOMAIN]
-        sampling = self._metadata[MetadataKeys.SAMPLING_TYPE]
-        name = self._metadata.get(MetadataKeys.NAME, "unnamed")
-        return f"Signal(name='{name}', length={len(self)}, domain={domain}, sampling={sampling})"
+        name = self._metadata.get(MetadataKeys.NAME.value, "unnamed")
+        return f"Signal(name='{name}', length={len(self)})"
 
     def __str__(self) -> str:
         """Return human-readable string representation."""
@@ -659,9 +657,9 @@ class Signal:
 
         # Create directories and .signals.json files
         parts = save_path.parts
-        current_path = Path(parts[0])
-        for part in parts[1:]:
-            current_path = current_path / part
+        for i in range(1, len(parts)+1):
+            path_str = '/'.join(parts[:i])
+            current_path = Path(path_str)
             if not current_path.exists():
                 current_path.mkdir(parents=False, exist_ok=True)
                 signals_file = current_path / '.signals.json'
