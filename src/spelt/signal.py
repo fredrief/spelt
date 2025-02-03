@@ -196,7 +196,10 @@ class Signal:
             self._x_data = None
 
         # Update with provided metadata
+        ## First check if metadata is passed as an argument
         if metadata:
+            md = metadata.pop('metadata', {})
+            self.update_metadata(md)
             self.update_metadata(metadata)
 
     def __repr__(self) -> str:
@@ -274,7 +277,7 @@ class Signal:
     @property
     def domain(self) -> SignalDomain:
         """Get signal domain as enum."""
-        return SignalDomain(self._metadata[MetadataKeys.DOMAIN])
+        return SignalDomain(self._metadata[MetadataKeys.DOMAIN.value])
 
     @property
     def metadata(self) -> dict:
@@ -381,7 +384,7 @@ class Signal:
         """
         # If already 1D, return copy of self
         if self.ndim == 1:
-            return [Signal(self._data.copy(), metadata=self._metadata.copy(), x_data=self._x_data.copy() if self._x_data is not None else None)]
+            return [Signal(self._data.copy(), metadata=self._metadata.copy(), x_data=self._x_data.copy() if self._x_data is not None else None)], [slice(None)]
 
         # Validate number of slice arguments
         if len(slice_args) != self.ndim - 1:
@@ -668,6 +671,7 @@ class Signal:
                         json.dump({}, f)
 
         # Create .signal marker file
+        save_path.mkdir(parents=False, exist_ok=True)
         (save_path / '.signal').touch()
 
         # Save data
@@ -734,7 +738,10 @@ class Signal:
                     elif key == MetadataKeys.SAMPLING_TYPE.value:
                         metadata[key] = SamplingType(value)
                     else:
-                        metadata[key] = value
+                        if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
+                            metadata[key] = value
+                        else:
+                            print(f"Warning: Invalid metadata value for {key}: {value}. Not json serializable.")
 
         # Create signal instance with path
         return cls(data=data, x_data=x_data, path=path, **metadata)

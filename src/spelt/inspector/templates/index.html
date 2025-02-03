@@ -51,6 +51,9 @@
                         <button class="btn btn-sm btn-outline-secondary" onclick="combinePlot()">
                             <i class="bi bi-layout-join"></i> Combine
                         </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshPlot()" title="Refresh Plot (⌘R / Ctrl+R)">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
                     </div>
                     <div class="btn-group ms-3" data-line-plot-controls>
                         <div class="dropdown d-inline-block me-2">
@@ -398,6 +401,14 @@ function updatePlot(tabId) {
     return fetch(`/plot/update?tab_id=${tabId}`)
         .then(response => response.json())
         .then(data => {
+            if (data.error === 'session_lost') {
+                // Show modal or alert
+                if (confirm('Session data was lost. Would you like to reload the page?')) {
+                    window.location.reload();
+                }
+                return;
+            }
+
             if (data.script && data.div) {
                 const activeTab = document.getElementById(`plot-${tabId}`);
                 const plotContainer = activeTab.querySelector('.plot-container');
@@ -749,6 +760,21 @@ document.addEventListener('click', function(event) {
         const signalElement = plotTypeItem.closest('[data-path]');
         const newType = plotTypeItem.dataset.plotType;
         togglePlotType(signalElement, newType);
+    }
+});
+
+function refreshPlot() {
+    const activeTab = document.querySelector('.tab-pane.active');
+    const tabId = activeTab.id.replace('plot-', '');
+    updatePlot(tabId);
+}
+
+// Add keyboard shortcut handler
+document.addEventListener('keydown', function(event) {
+    // Check for Cmd+R (Mac) or Ctrl+R (Windows/Linux)
+    if ((event.metaKey || event.ctrlKey) && event.key === 'r') {
+        event.preventDefault(); // Prevent browser refresh
+        refreshPlot();
     }
 });
 </script>

@@ -221,7 +221,7 @@ def find_x_range(signals: List[Signal]):
     return Range1d(start=x_min - (x_max - x_min) * 0.05,
                                    end=x_max + (x_max - x_min) * 0.05)
 
-def get_tools(units_list=None):
+def get_tools():
     """Get tools for the plot"""
     # Create shared tools
     pan = PanTool()
@@ -320,6 +320,14 @@ def browse(subpath=''):
 @bp.route('/plot/update')
 def update_plot():
     tab_id = request.args.get('tab_id', '1')
+
+    # Check if session is lost
+    if 'tabs' not in session or tab_id not in session['tabs']:
+        return jsonify({
+            'status': 'error',
+            'error': 'session_lost',
+            'message': 'Session data was lost. Please reload the page.'
+        }), 400
 
     tab_state = get_tab(tab_id)
     plot_type = tab_state.get('plot_type', 'line')
@@ -453,6 +461,11 @@ def update_heatmap_plot(tab_id):
 def update_line_plot(tab_id):
     """Create line plot for 1D signals or 2D/3D signals in line mode."""
     signals = get_signals(tab_id)
+    # verify that all signals have the same x_unit
+    x_units = [signal.metadata.get(MetadataKeys.X_UNIT.value, None) for signal in signals]
+    if not all(x_unit == x_units[0] for x_unit in x_units):
+        return jsonify({'error': 'All signals must have the same x_unit'}), 400
+
     x_range = find_x_range(signals)
 
     # Get color palette
@@ -463,6 +476,8 @@ def update_line_plot(tab_id):
     n_plots = tab_state['n_plots']
     plots = [None] * n_plots
     sliders = []
+    # Create base tools without hover
+    tools = get_tools()
 
     for plot_id, plot_state in tab_state['sub_plots'].items():
         position = plot_state['position']
@@ -476,11 +491,8 @@ def update_line_plot(tab_id):
                 signals_by_unit[unit] = []
             signals_by_unit[unit].append(signal)
 
-        # Create base tools without hover
-        tools = get_tools()
-
         # only show legends and hover if less than 10 signals in plot
-        SHOW_LEGENDS = len(signals_in_plot) <= 10
+        SHOW_LEGENDS = len(signals_in_plot) <= 15
 
         # Get scale settings from plot state
         x_scale = plot_state.get('x_scale', 'linear')

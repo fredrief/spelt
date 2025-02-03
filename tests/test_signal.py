@@ -109,7 +109,7 @@ class TestMetadataValidation:
         """Test metadata consistency validation."""
         data = np.zeros((2, 3))
         with pytest.raises(ValueError, match="Number of dimensions"):
-            Signal(data, {MetadataKeys.DIMENSIONS.value: ["time"]})  # Too few dimensions
+            Signal(data, dimensions = ["time"])  # Too few dimensions
 
     def test_custom_metadata(self):
         """Test setting custom metadata keys."""
@@ -265,7 +265,7 @@ def test_signal_creation():
     assert signal.dimensions == ['dim_0', 'dim_1']
 
     # Custom dimensions
-    signal = Signal(data_2d, {MetadataKeys.DIMENSIONS.value: ['time', 'channels']})
+    signal = Signal(data_2d, dimensions = ['time', 'channels'])
     assert signal.dimensions == ['time', 'channels']
 
 def test_signal_slicing():
@@ -285,7 +285,7 @@ def test_signal_save_load(tmp_path):
         MetadataKeys.DOMAIN.value: SignalDomain.TIME,
         MetadataKeys.SAMPLING_TYPE.value: SamplingType.UNDEFINED
     }
-    signal = Signal(data, metadata)
+    signal = Signal(data, **metadata)
 
     # Save and load
     save_path = tmp_path / 'test_signal'
@@ -302,10 +302,10 @@ def test_invalid_dimensions():
 
     # Test mismatched dimensions
     with pytest.raises(ValueError):
-        Signal(data, {MetadataKeys.DIMENSIONS.value: ['time']})  # Too few dimensions
+        Signal(data, dimensions = ['time'])  # Too few dimensions
 
     with pytest.raises(ValueError):
-        Signal(data, {MetadataKeys.DIMENSIONS.value: ['time', 'ch', 'extra']})  # Too many dimensions
+        Signal(data, dimensions = ['time', 'ch', 'extra'])  # Too many dimensions
 
 def test_metadata_handling():
     data = np.array([1, 2, 3, 4])
@@ -315,7 +315,7 @@ def test_metadata_handling():
         MetadataKeys.UNIT.value: 'V',
         MetadataKeys.DOMAIN.value: SignalDomain.TIME
     }
-    signal = Signal(data, metadata)
+    signal = Signal(data, **metadata)
 
     # Verify metadata is properly stored
     assert signal._metadata[MetadataKeys.NAME.value] == 'test_signal'
@@ -332,3 +332,96 @@ def test_arithmetic_operations(basic_signal):
     assert np.array_equal(result.data, basic_signal.data + signal2.data)
 
     # Other operations similarly...
+
+class TestSignalConversion:
+    def test_1d_signal_conversion(self):
+        """Test converting already 1D signal."""
+        data = np.array([1, 2, 3, 4])
+        signal = Signal(data, name="test")
+
+        signals, index_tuples = signal.to_1d_signals()
+        assert len(signals) == 1
+        assert len(index_tuples) == 1
+        assert np.array_equal(signals[0].data, data)
+        assert index_tuples[0] == slice(None)
+
+    def test_2d_signal_conversion(self):
+        """Test converting 2D signal to 1D signals."""
+        data = np.array([[1, 2, 3],
+                        [4, 5, 6]])
+        signal = Signal(data, name="test", dimensions = ["time", "channels"])
+
+        # Test slicing along second dimension
+        signals, index_tuples = signal.to_1d_signals(slice(None))
+        assert len(signals) == 3  # Should get 3 signals (one per column)
+        assert len(index_tuples) == 3
+        assert np.array_equal(signals[0].data, data[:, 0])
+        assert np.array_equal(signals[1].data, data[:, 1])
+        assert np.array_equal(signals[2].data, data[:, 2])
+        assert index_tuples[0] == [slice(None), 0]
+        assert index_tuples[1] == [slice(None), 1]
+        assert index_tuples[2] == [slice(None), 2]
+
+        # Test with specific index
+        signals, index_tuples = signal.to_1d_signals(1)
+        assert len(signals) == 1
+        assert len(index_tuples) == 1
+        assert np.array_equal(signals[0].data, data[:, 1])
+        assert index_tuples[0] == [slice(None), 1]
+
+    def test_3d_signal_conversion(self):
+        """Test converting 3D signal to 1D signals."""
+        data = np.zeros((10, 4, 3))  # time, channels, trials
+        for i in range(3):  # trials
+            for j in range(4):  # channels
+                data[:, j, i] = np.arange(10) + i*10 + j*100
+
+        signal = Signal(data, metadata={
+            MetadataKeys.NAME.value: "test",
+            MetadataKeys.DIMENSIONS.value: ["time", "channels", "trials"]
+        })
+
+        # Test slicing with specific indices
+        signals, index_tuples = signal.to_1d_signals(2, 1)
+        assert len(signals) == 1
+        assert len(index_tuples) == 1
+        assert np.array_equal(signals[0].data, data[:, 2, 1])
+        assert index_tuples[0] == [slice(None), 2, 1]
+
+        # Test slicing with one range
+        signals, index_tuples = signal.to_1d_signals(slice(None), 1)
+        assert len(signals) == 4  # One signal per trial
+        assert len(index_tuples) == 4
+        for i in range(4):
+            assert np.array_equal(signals[i].data, data[:, i, 1])
+            assert index_tuples[i] == [slice(None), i, 1]
+
+    def test_invalid_conversions(self):
+        """Test invalid conversion scenarios."""
+        data_3d = np.zeros((5, 4, 3))
+        signal = Signal(data_3d)
+
+        # Test wrong number of slice arguments
+        with pytest.raises(ValueError, match="Expected 2 slice arguments"):
+            signal.to_1d_signals(1)  # Too few arguments
+
+        with pytest.raises(ValueError, match="Expected 2 slice arguments"):
+            signal.to_1d_signals(1, 2, 3)  # Too many arguments
+
+        # Test multiple ranges
+        with pytest.raises(ValueError, match="At most one dimension can have a range"):
+            signal.to_1d_signals(slice(None), slice(None))
+
+    def test_name_suffix(self):
+        """Test name suffix in conversion."""
+        data = np.array([[1, 2, 3],
+                        [4, 5, 6]])
+        signal = Signal(data, metadata={
+            MetadataKeys.NAME.value: "test",
+            MetadataKeys.DIMENSIONS.value: ["time", "channels"]
+        })
+
+        signals, _ = signal.to_1d_signals(slice(None), name_suffix="ch")
+        assert len(signals) == 3
+        for i, sig in enumerate(signals):
+            assert sig.metadata[MetadataKeys.NAME.value] == f"test ch{i}"
