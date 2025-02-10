@@ -54,6 +54,15 @@
                         <button class="btn btn-sm btn-outline-secondary" onclick="refreshPlot()" title="Refresh Plot (⌘R / Ctrl+R)">
                             <i class="bi bi-arrow-clockwise"></i> Refresh
                         </button>
+                        <div class="dropdown d-inline-block ms-2">
+                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                Style: <span class="current-style">Line</span>
+                            </button>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="#" onclick="setPlotStyle('line')">Line</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="setPlotStyle('scatter')">Scatter</a></li>
+                            </ul>
+                        </div>
                     </div>
                     <div class="btn-group ms-3" data-line-plot-controls>
                         <div class="dropdown d-inline-block me-2">
@@ -777,5 +786,30 @@ document.addEventListener('keydown', function(event) {
         refreshPlot();
     }
 });
+
+// Add this function with the other JavaScript functions
+function setPlotStyle(style) {
+    const activeTab = document.querySelector('.tab-pane.active');
+    const tabId = activeTab.id.replace('plot-', '');
+
+    // Update the button text
+    const button = event.target.closest('.dropdown').querySelector('.current-style');
+    button.textContent = style.charAt(0).toUpperCase() + style.slice(1);
+
+    // Call backend to update style
+    fetch(`/plot/set_style/${tabId}?style=${style}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                updatePlot(tabId);
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert(`Error setting plot style: ${error.message}`);
+        });
+}
 </script>
 {% endblock %}

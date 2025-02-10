@@ -17,6 +17,7 @@ import re
 from spelt.signal import Signal, MetadataKeys, SignalDomain, SamplingType
 from enum import Enum
 from .js_snippets import FORMAT_WITH_PREFIX, ZOOM_KEY_HANDLER, SLIDER_UPDATE_CALLBACK
+import os
 
 bp = Blueprint('main', __name__)
 
@@ -74,7 +75,9 @@ def reset_tab(tab_id):
     session['tabs'][tab_id] = {
         'sub_plots': {},
         'n_plots': 0,
-        'plot_type': 'line'  # Default to line plot
+        'plot_type': 'line',  # Default to line plot
+        'plot_style': 'line',  # Default plot style
+        'x_scale': 'linear'   # Add x_scale at tab level
     }
     session.modified = True
     return session['tabs'][tab_id]
@@ -94,8 +97,7 @@ def add_new_plot(tab_state):
     tab_state['sub_plots'][f'plot_{plot_id}'] = {
         'signals': [],
         'position': plot_id, # New plots are added to the end
-        'x_scale': 'linear',  # Default x scale
-        'y_scale': 'linear'   # Default y scale
+        'y_scale': 'linear'   # Only y_scale remains at plot level
     }
     session.modified = True
     return tab_state['sub_plots'][f'plot_{plot_id}']
@@ -205,21 +207,28 @@ def get_signals(tab_id, plot_id=None, return_as_dict=False):
 
 
 
-def find_x_range(signals: List[Signal]):
+def find_x_range(signals: List[Signal], x_scale='linear'):
     """Calculate x range from all signals"""
     x_min = float('inf')  # Initialize to positive infinity
     x_max = float('-inf')  # Initialize to negative infinity
     for signal in signals:
         if signal.x_data is not None:
-            x_min = min(x_min, np.min(signal.x_data))
-            x_max = max(x_max, np.max(signal.x_data))
+            if x_scale == 'linear':
+                x_min = min(x_min, np.min(signal.x_data))
+                x_max = max(x_max, np.max(signal.x_data))
+            else:
+                x_max = max(x_max, np.max(signal.x_data))
+                # If np.min(signal.x_data) is 0, use the second smallest value as x_min
+                x_min = min(x_min, np.min(signal.x_data[signal.x_data != 0]))
 
     # Handle case where no valid signals were found
     if x_min == float('inf'):
         x_min = 0
         x_max = max(len(signal.data) for signal in signals)
-    return Range1d(start=x_min - (x_max - x_min) * 0.05,
-                                   end=x_max + (x_max - x_min) * 0.05)
+
+    x_start = x_min - (x_max - x_min) * 0.05 if x_scale == 'linear' else x_min
+    x_end = x_max + (x_max - x_min) * 0.05
+    return Range1d(start=x_start, end=x_end)
 
 def get_tools():
     """Get tools for the plot"""
@@ -236,7 +245,7 @@ def get_tools():
         line_width=1
     )
 
-    tools = [pan, wheel_zoom_x, wheel_zoom_y, box_zoom, reset, save, crosshair]
+    tools = [box_zoom, pan, wheel_zoom_x, wheel_zoom_y, reset, save, crosshair]
     return tools
 
 @bp.route('/')
@@ -287,7 +296,7 @@ def browse(subpath=''):
                         item_data = {
                             'name': p.name,
                             'type': 'signal' if is_signal else 'folder',
-                            'path': str(p.relative_to(root_dir)),
+                            'path': str(Path(os.path.relpath(p, root_dir))),
                         }
 
                         # If it's a signal, load it to get properties
@@ -466,13 +475,16 @@ def update_line_plot(tab_id):
     if not all(x_unit == x_units[0] for x_unit in x_units):
         return jsonify({'error': 'All signals must have the same x_unit'}), 400
 
-    x_range = find_x_range(signals)
+    tab_state = get_tab(tab_id)
+    # Get scale settings - x_scale from tab_state, y_scale from plot_state
+    x_scale = tab_state.get('x_scale', 'linear')
+
+    x_range = find_x_range(signals, x_scale=x_scale)
 
     # Get color palette
     colors = Category10[10]
 
     # Preallocate empty list for plots, using n_plots from tab state
-    tab_state = get_tab(tab_id)
     n_plots = tab_state['n_plots']
     plots = [None] * n_plots
     sliders = []
@@ -494,10 +506,7 @@ def update_line_plot(tab_id):
         # only show legends and hover if less than 10 signals in plot
         SHOW_LEGENDS = len(signals_in_plot) <= 15
 
-        # Get scale settings from plot state
-        x_scale = plot_state.get('x_scale', 'linear')
         y_scale = plot_state.get('y_scale', 'linear')
-
         p = figure(
             height=calculate_plot_height(n_plots),  # Smaller height for sub plots
             sizing_mode='stretch_width',
@@ -505,10 +514,12 @@ def update_line_plot(tab_id):
             tools=tools,
             toolbar_location='above' if position == 0 else None,
             x_axis_type=x_scale,
-            y_axis_type=y_scale
+            y_axis_type=y_scale,
+            active_drag=tools[0]
         )
 
         # For log scale, ensure positive ranges
+        print(x_range.start)
         if x_scale == 'log':
             if isinstance(x_range, Range1d):
                 x_range.start = max(1e-10, x_range.start)
@@ -549,10 +560,17 @@ def update_line_plot(tab_id):
                 # Add new range
                 p.extra_y_ranges[f'y{i}'] = Range1d(start=0, end=1)  # Will be auto-scaled
 
+            # Get plot style from plot state
+            plot_style = plot_state.get('plot_style', 'line')
+
             # Plot signals for this unit
             for signal in unit_signals:
                 y_data = signal.data
+                # Remove inf values from data
+                valid_indices = ~np.isinf(y_data)
+                y_data = y_data[valid_indices]
                 x_data = signal.x_data if signal.x_data is not None else np.arange(y_data.shape[0])
+                x_data = x_data[valid_indices]
                 legend = signal.metadata.get(MetadataKeys.NAME.value, f'Signal {color_index+1}')
                 color = colors[color_index % len(colors)]
 
@@ -575,19 +593,30 @@ def update_line_plot(tab_id):
                         renderers=[] # Will be set after line is created
                     )
 
-                    # Plot line with appropriate y range
-                    if i == 0:
-                        line = p.line('x', 'y', source=source, line_width=2, color=color,
-                                legend_label=legend)
-                    else:
-                        line = p.line('x', 'y', source=source, line_width=2, color=color,
-                                legend_label=legend, y_range_name=f'y{i}')
+                    # Plot with appropriate style and y range
+                    if plot_style == 'scatter':
+                        if i == 0:
+                            line = p.scatter('x', 'y', source=source, size=4, color=color,
+                                        legend_label=legend)
+                        else:
+                            line = p.scatter('x', 'y', source=source, size=4, color=color,
+                                        legend_label=legend, y_range_name=f'y{i}')
+                    else:  # line style
+                        if i == 0:
+                            line = p.line('x', 'y', source=source, line_width=2, color=color,
+                                        legend_label=legend)
+                        else:
+                            line = p.line('x', 'y', source=source, line_width=2, color=color,
+                                        legend_label=legend, y_range_name=f'y{i}')
 
                     # Add line to hover tool's renderers
                     hover.renderers = [line]
                     p.add_tools(hover)
                 else:
-                    line = p.line('x', 'y', source=source, line_width=2, color=color)
+                    if plot_style == 'scatter':
+                        line = p.scatter('x', 'y', source=source, size=4, color=color)
+                    else:  # line style
+                        line = p.line('x', 'y', source=source, line_width=2, color=color)
 
                 color_index += 1
 
@@ -595,7 +624,10 @@ def update_line_plot(tab_id):
             y_min = float('inf')
             y_max = float('-inf')
             for signal in unit_signals:
+                # Remove inf values from data
                 y_data = np.real(signal.data)
+                valid_indices = ~np.isinf(y_data)
+                y_data = y_data[valid_indices]
                 y_min = min(y_min, np.min(y_data))
                 y_max = max(y_max, np.max(y_data))
 
@@ -885,9 +917,13 @@ def set_scale(tab_id):
 
     tab_state = get_tab(str(tab_id))
 
-    # Update scale for all plots in the tab
-    for plot_state in tab_state['sub_plots'].values():
-        plot_state[f'{axis}_scale'] = scale
+    if axis == 'x':
+        # Set x_scale at tab level
+        tab_state['x_scale'] = scale
+    else:
+        # Update y_scale for all plots in the tab
+        for plot_state in tab_state['sub_plots'].values():
+            plot_state['y_scale'] = scale
 
     session.modified = True
     return jsonify({'status': 'success'})
@@ -906,6 +942,23 @@ def set_color_range(tab_id):
         tab_state['color_range']['min'] = min_val
     if max_val is not None:
         tab_state['color_range']['max'] = max_val
+
+    session.modified = True
+    return jsonify({'status': 'success'})
+
+@bp.route('/plot/set_style/<int:tab_id>')
+def set_style(tab_id):
+    """Set the plot style for all plots in a tab."""
+    style = request.args.get('style')
+
+    if style not in ['line', 'scatter']:
+        return jsonify({'error': 'Invalid style'}), 400
+
+    tab_state = get_tab(str(tab_id))
+
+    # Update style for all plots in the tab
+    for plot_state in tab_state['sub_plots'].values():
+        plot_state['plot_style'] = style
 
     session.modified = True
     return jsonify({'status': 'success'})

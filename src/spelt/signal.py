@@ -37,6 +37,8 @@ class MetadataKeys(Enum):
     DIMENSIONS = "dimensions"
     DIM_UNITS = "dim_units"
     DOMAIN = "domain"
+    BIN_IDX = "bin_idx"
+    SAMPLES_PER_PERIOD = "samples_per_period"
 
 @dataclass
 class MetadataValidator:
@@ -93,6 +95,20 @@ class MetadataValidation:
                 return False
         return False
 
+    @staticmethod
+    def is_valid_bin_idx(value: Any) -> bool:
+        """Validate bin index."""
+        if isinstance(value, (list, tuple)):
+            return all(isinstance(x, (int, np.integer)) for x in value)
+        return isinstance(value, (int, np.integer))
+
+    @staticmethod
+    def is_valid_samples_per_period(value: Any) -> bool:
+        """Validate samples per period."""
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return value > 0
+        return False
+
     # Validation rules for each metadata key
     RULES = {
         MetadataKeys.SAMPLING_TYPE: MetadataValidator(
@@ -126,6 +142,14 @@ class MetadataValidation:
         MetadataKeys.DOMAIN: MetadataValidator(
             validator=lambda x: MetadataValidation.is_valid_domain(x),
             error_msg="Domain must be a valid SignalDomain value"
+        ),
+        MetadataKeys.BIN_IDX: MetadataValidator(
+            validator=lambda x: MetadataValidation.is_valid_bin_idx(x),
+            error_msg="Bin index must be an integer or list of integers"
+        ),
+        MetadataKeys.SAMPLES_PER_PERIOD: MetadataValidator(
+            validator=lambda x: MetadataValidation.is_valid_samples_per_period(x),
+            error_msg="Samples per period must be a positive number"
         )
     }
 
@@ -458,7 +482,7 @@ class Signal:
 
                 # Add name suffix to metadata
                 md = new_metadata.copy()
-                md[MetadataKeys.NAME.value] = f"{self.metadata[MetadataKeys.NAME.value]} {name_suffix}{i}"
+                md[MetadataKeys.NAME.value] = f"{self.metadata.get(MetadataKeys.NAME.value, '')} {name_suffix}{i}"
                 sig_list.append(Signal(
                     signal_data,
                     metadata=md,
@@ -796,4 +820,44 @@ class Signal:
             new_x_data = self._x_data[index_tuple[0]]
 
         return Signal(data=new_data, metadata=new_metadata, x_data=new_x_data, path=self._path)
+
+    def clip_to_cycles(self, **kwargs) -> 'Signal':
+        """Clip signal to integer number of cycles.
+
+        Args:
+            **kwargs: Keyword arguments for clipping
+
+        Returns:
+            Clipped signal
+        """
+        # Verify required metadata exists
+        if MetadataKeys.BIN_IDX.value not in self._metadata:
+            raise ValueError("Signal must have bin_idx in metadata to clip to cycles")
+        if MetadataKeys.SAMPLES_PER_PERIOD.value not in self._metadata:
+            raise ValueError("Signal must have samples_per_period in metadata to clip to cycles")
+
+        bin_idx = self._metadata[MetadataKeys.BIN_IDX.value]
+        samples_per_period = self._metadata[MetadataKeys.SAMPLES_PER_PERIOD.value]
+        n_cycles = bin_idx
+
+        # Calculate required length for integer number of cycles
+        target_length = int(n_cycles * samples_per_period)
+
+        # Clip half of the samples in front and back
+        start_idx = int((len(self._data) - target_length) / 2)
+        end_idx = start_idx + target_length
+        clipped_data = self._data[start_idx:end_idx]
+
+        # Create new metadata
+        new_metadata = self._metadata.copy()
+        if MetadataKeys.NAME.value in self._metadata:
+            new_metadata[MetadataKeys.NAME.value] = f"{self._metadata[MetadataKeys.NAME.value]} clipped"
+
+        # Handle x_data if present
+        new_x_data = None
+        if self._x_data is not None:
+            new_x_data = self._x_data[start_idx:end_idx]
+
+        return Signal(data=clipped_data, metadata=new_metadata, x_data=new_x_data, path=self._path)
+
 
