@@ -25,6 +25,7 @@ def serialize_signal(signal: Signal, representation: str, plot_type: str = 'line
     """Convert Signal to JSON serializable format."""
     serialized = {}
     serialized['path'] = str(signal.path.relative_to(Path(session['ROOT_DIR'])))
+    serialized['shape'] = signal.shape  # Add shape information
 
     # First copy all metadata
     for key, value in signal.metadata.items():
@@ -105,13 +106,21 @@ def add_new_plot(tab_state):
 def get_plot_state(tab_state, plot_id):
     return tab_state['sub_plots'][f'plot_{plot_id}']
 
-def add_signal_to_plot(plot_state, signal: Signal, representation: str, plot_type: str = 'line'):
+def add_signal_to_plot(plot_state, signal: Signal, representation: str, plot_type: str = 'line', selected_column: Optional[int] = None):
     """Adds a signal to the plot."""
-    # Check if signal is already in the plot with same representation
+    # Check if signal is already in the plot with same representation and column
     signal_path = str(signal.path)
     for signal_dict in plot_state['signals']:
         if signal_dict['path'] in signal_path and signal_dict.get('representation') == representation:
-            return plot_state
+            # For 2D signals, also check the column
+            if signal.ndim == 2 and selected_column != 'all':
+                # Check if this exact column is already plotted
+                index_tuple = signal_dict.get('index_tuple', [])
+                if len(index_tuple) > 1 and index_tuple[1] == selected_column:
+                    return plot_state
+            else:
+                # For non-2D signals or when plotting all columns, use original behavior
+                return plot_state
 
     if plot_type == 'heatmap':
         if signal.ndim == 2:
@@ -137,11 +146,34 @@ def add_signal_to_plot(plot_state, signal: Signal, representation: str, plot_typ
             plot_state['signals'].append(serialize_signal(signal, representation, plot_type='line'))
         elif signal.ndim == 2:
             # For 2D signals in line mode, convert to list of 1D signals
-            signals_1d, index_tuple_list = signal.to_1d_signals(slice(None))
-            for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
-                serialized = serialize_signal(sig_1d, representation, plot_type='line')
-                serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+            if selected_column is not None and selected_column != 'all':
+                # Extract only the selected column
+                selected_idx = int(selected_column)
+                # Create new metadata for 1D signal
+                new_metadata = {
+                    MetadataKeys.UNIT.value: signal.metadata.get(MetadataKeys.UNIT.value),
+                    MetadataKeys.NAME.value: f"{signal.metadata.get(MetadataKeys.NAME.value, '')} {selected_idx}",  # Add column index to name
+                    MetadataKeys.X_UNIT.value: signal.metadata.get(MetadataKeys.X_UNIT.value),
+                    MetadataKeys.X_NAME.value: signal.metadata.get(MetadataKeys.X_NAME.value),
+                    MetadataKeys.DOMAIN.value: signal.metadata.get(MetadataKeys.DOMAIN.value),
+                    MetadataKeys.SAMPLING_TYPE.value: signal.metadata.get(MetadataKeys.SAMPLING_TYPE.value),
+                    MetadataKeys.DIMENSIONS.value: [signal.dimensions[0]]  # Only keep first dimension
+                }
+                # Copy dimension units if they exist
+                if MetadataKeys.DIM_UNITS.value in signal.metadata:
+                    new_metadata[MetadataKeys.DIM_UNITS.value] = [signal.metadata[MetadataKeys.DIM_UNITS.value][0]]
+
+                signal_1d = signal.derive(signal.data[:, selected_idx], new_metadata)
+                serialized = serialize_signal(signal_1d, representation, plot_type='line')
+                serialized['index_tuple'] = [serialize_index(slice(None)), serialize_index(selected_idx)]
                 plot_state['signals'].append(serialized)
+            else:
+                # Original behavior for all columns
+                signals_1d, index_tuple_list = signal.to_1d_signals(slice(None))
+                for sig_1d, index_tuple in zip(signals_1d, index_tuple_list):
+                    serialized = serialize_signal(sig_1d, representation, plot_type='line')
+                    serialized['index_tuple'] = [serialize_index(idx) for idx in index_tuple]
+                    plot_state['signals'].append(serialized)
         elif signal.ndim == 3:
             # Initialize slider state if not exists
             if 'sliders' not in plot_state:
@@ -304,6 +336,7 @@ def browse(subpath=''):
                             signal = Signal.load(p)  # Use absolute path
                             item_data.update({
                                 'ndim': signal.ndim,
+                                'shape': signal.shape,  # Add shape information
                                 'is_complex': signal.data.dtype.kind == 'c',
                                 'description': signal.metadata.get(MetadataKeys.DESCRIPTION.value, '')
                             })
@@ -714,6 +747,7 @@ def replace(signal_path):
     tab_id = request.args.get('tab_id', '1')
     representation = request.args.get('representation', 'real')
     plot_type = request.args.get('plot_type', 'line')
+    selected_column = request.args.get('selected_column', 'all')
 
     # Get full path
     full_path = Path(session['ROOT_DIR']) / signal_path
@@ -727,7 +761,7 @@ def replace(signal_path):
     session.modified = True
 
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal, representation, plot_type)
+    add_signal_to_plot(plot_state, signal, representation, plot_type, selected_column)
 
     return jsonify({'status': 'success'})
 
@@ -736,6 +770,7 @@ def replace(signal_path):
 def append(signal_path):
     tab_id = request.args.get('tab_id', '1')
     representation = request.args.get('representation', 'real')
+    selected_column = request.args.get('selected_column', 'all')
 
     # Get tab state and check plot type
     tab_state = get_tab(tab_id)
@@ -754,7 +789,7 @@ def append(signal_path):
         plot_state = add_new_plot(tab_state)
     else:
         plot_state = get_plot_state(tab_state, tab_state['n_plots'] - 1)
-    add_signal_to_plot(plot_state, signal, representation, 'line')
+    add_signal_to_plot(plot_state, signal, representation, 'line', selected_column)
 
     return jsonify({'status': 'success'})
 
@@ -763,6 +798,7 @@ def new_tab(signal_path):
     # Plot signal in new tab
     representation = request.args.get('representation', 'real')
     plot_type = request.args.get('plot_type', 'line')
+    selected_column = request.args.get('selected_column', 'all')
     tab_id = create_new_tab()
 
     # Get full path
@@ -776,7 +812,7 @@ def new_tab(signal_path):
     tab_state['plot_type'] = plot_type  # Set plot type for the tab
     # By default, add signal to last plot
     plot_state = add_new_plot(tab_state)
-    add_signal_to_plot(plot_state, signal, representation, plot_type)
+    add_signal_to_plot(plot_state, signal, representation, plot_type, selected_column)
 
     return jsonify({'status': 'success', 'tab_id': tab_id})
 
@@ -890,16 +926,18 @@ def find_slider_state(plot_state, signal_path):
 
 
 def serialize_index(idx):
+    """Convert index to JSON serializable format."""
     if isinstance(idx, slice):
         return {
             'type': 'slice',
-            'start': idx.start,
-            'stop': idx.stop,
-            'step': idx.step
+            'start': idx.start if idx.start is not None else None,
+            'stop': idx.stop if idx.stop is not None else None,
+            'step': idx.step if idx.step is not None else None
         }
-    return idx
+    return int(idx)  # Convert numpy integers to Python integers
 
 def deserialize_index(idx):
+    """Convert serialized index back to proper format."""
     if isinstance(idx, dict) and idx.get('type') == 'slice':
         return slice(idx['start'], idx['stop'], idx['step'])
     return idx

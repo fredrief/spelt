@@ -1,4 +1,4 @@
-def format_with_prefix(value: float) -> str:
+def format_with_prefix(value: float, decimals: int = 2) -> str:
     """Format a number with SI prefix.
 
     Args:
@@ -45,4 +45,4 @@ def format_with_prefix(value: float) -> str:
     scaled = value / 10**exp
     prefix = prefixes[exp]
 
-    return f'{scaled:.2f} {prefix}'.strip()
+    return f'{scaled:.{decimals}f} {prefix}'.strip()

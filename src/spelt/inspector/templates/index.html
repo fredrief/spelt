@@ -289,6 +289,16 @@ function loadDirectory(path='') {
                     ${item.type === 'signal' ? `
                         <div class="ms-auto d-flex align-items-center">
                             <span class="badge bg-secondary me-2">${item.ndim}D</span>
+                            ${item.ndim === 2 ? `
+                                <div class="column-selector me-2">
+                                    <select class="form-select form-select-sm" style="width: auto;">
+                                        <option value="all">all</option>
+                                        ${Array.from({length: item.shape?.[1] || 0}, (_, i) =>
+                                            `<option value="${i}">${i+1}</option>`
+                                        ).join('')}
+                                    </select>
+                                </div>
+                            ` : ''}
                             <div class="plot-type-selector me-2">
                                 ${item.ndim <= 1 ? `
                                     <button class="btn btn-sm btn-link p-0 disabled" type="button">
@@ -580,22 +590,26 @@ function plotSignal(action, element) {
     const representation = element.dataset.selectedRepresentation || 'real';
     const plotType = element.dataset.plotType || 'line';
     const currentTabId = getActiveTabId();
+
+    // Get selected column value
+    let selectedColumn;  // Declare the variable first
+    const columnSelector = element.querySelector('.column-selector select');
+    selectedColumn = columnSelector ? columnSelector.value : 'all';
+
     let url = '';
 
+    console.log('Appending signal:', path, representation, currentTabId, selectedColumn);
     switch(action) {
         case 'replace':
-            url = `/signal/replace/${path}?representation=${representation}&plot_type=${plotType}&tab_id=${currentTabId}`;
-            // Update controls visibility based on plot type
+            url = `/signal/replace/${path}?representation=${representation}&plot_type=${plotType}&tab_id=${currentTabId}&selected_column=${selectedColumn}`;
             updateControlsVisibility(plotType);
             break;
         case 'append':
-            url = `/signal/append/${path}?representation=${representation}&tab_id=${currentTabId}`;
-            // Update controls visibility based on plot type
+            url = `/signal/append/${path}?representation=${representation}&tab_id=${currentTabId}&selected_column=${selectedColumn}`;
             updateControlsVisibility(plotType);
             break;
         case 'new-tab':
-            url = `/signal/new_tab/${path}?representation=${representation}&plot_type=${plotType}`;  // No need for tab_id in new tab
-            // Update controls visibility based on plot type
+            url = `/signal/new_tab/${path}?representation=${representation}&plot_type=${plotType}&selected_column=${selectedColumn}`;
             updateControlsVisibility(plotType);
             break;
     }
@@ -619,6 +633,7 @@ function plotSignal(action, element) {
                         }
                     }, 100);
                 } else {
+                    // Always update the plot after successful operation
                     updatePlot(tabId);
                 }
             } else {

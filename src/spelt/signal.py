@@ -860,4 +860,17 @@ class Signal:
 
         return Signal(data=clipped_data, metadata=new_metadata, x_data=new_x_data, path=self._path)
 
+    def derive(self, data: np.ndarray, metadata: Optional[Dict] = None) -> 'Signal':
+        """Create a new Signal derived from this one, preserving path and optionally metadata.
+
+        Args:
+            data: The new data array
+            metadata: Optional metadata dictionary. If None, uses current metadata.
+
+        Returns:
+            A new Signal instance with the specified data and metadata, preserving the path
+        """
+        new_metadata = metadata if metadata is not None else self.metadata.copy()
+        return Signal(data=data, metadata=new_metadata, path=self._path)
+
 
