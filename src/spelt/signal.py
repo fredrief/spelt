@@ -7,6 +7,7 @@ from pint import UnitRegistry
 import json
 from pathlib import Path
 from dataclasses import dataclass
+import scipy.signal
 
 ureg = UnitRegistry()
 
@@ -39,6 +40,7 @@ class MetadataKeys(Enum):
     DOMAIN = "domain"
     BIN_IDX = "bin_idx"
     SAMPLES_PER_PERIOD = "samples_per_period"
+    COHERENT_LENGTH = "coherent_length"
 
 @dataclass
 class MetadataValidator:
@@ -109,6 +111,11 @@ class MetadataValidation:
             return value > 0
         return False
 
+    @staticmethod
+    def is_valid_coherent_length(value: Any) -> bool:
+        """Validate coherent length."""
+        return isinstance(value, (int, np.integer)) and value > 0
+
     # Validation rules for each metadata key
     RULES = {
         MetadataKeys.SAMPLING_TYPE: MetadataValidator(
@@ -150,7 +157,11 @@ class MetadataValidation:
         MetadataKeys.SAMPLES_PER_PERIOD: MetadataValidator(
             validator=lambda x: MetadataValidation.is_valid_samples_per_period(x),
             error_msg="Samples per period must be a positive number"
-        )
+        ),
+        MetadataKeys.COHERENT_LENGTH: MetadataValidator(
+            validator=lambda x: MetadataValidation.is_valid_coherent_length(x),
+            error_msg="Coherent length must be a positive integer"
+        ),
     }
 
 class Signal:
@@ -821,7 +832,7 @@ class Signal:
 
         return Signal(data=new_data, metadata=new_metadata, x_data=new_x_data, path=self._path)
 
-    def clip_to_cycles(self, **kwargs) -> 'Signal':
+    def clip_to_coherent_length(self, **kwargs) -> 'Signal':
         """Clip signal to integer number of cycles.
 
         Args:
@@ -831,21 +842,14 @@ class Signal:
             Clipped signal
         """
         # Verify required metadata exists
-        if MetadataKeys.BIN_IDX.value not in self._metadata:
-            raise ValueError("Signal must have bin_idx in metadata to clip to cycles")
-        if MetadataKeys.SAMPLES_PER_PERIOD.value not in self._metadata:
-            raise ValueError("Signal must have samples_per_period in metadata to clip to cycles")
+        if MetadataKeys.COHERENT_LENGTH.value not in self._metadata:
+            raise ValueError("Coherent length metadata not found")
 
-        bin_idx = self._metadata[MetadataKeys.BIN_IDX.value]
-        samples_per_period = self._metadata[MetadataKeys.SAMPLES_PER_PERIOD.value]
-        n_cycles = bin_idx
-
-        # Calculate required length for integer number of cycles
-        target_length = int(n_cycles * samples_per_period)
+        coherent_length = self._metadata[MetadataKeys.COHERENT_LENGTH.value]
 
         # Clip half of the samples in front and back
-        start_idx = int((len(self._data) - target_length) / 2)
-        end_idx = start_idx + target_length
+        start_idx = int((self._data.shape[0] - coherent_length) / 2)
+        end_idx = start_idx + coherent_length
         clipped_data = self._data[start_idx:end_idx]
 
         # Create new metadata
@@ -872,5 +876,55 @@ class Signal:
         """
         new_metadata = metadata if metadata is not None else self.metadata.copy()
         return Signal(data=data, metadata=new_metadata, path=self._path)
+
+    def decimate(self, factor: int, **kwargs) -> 'Signal':
+        """Decimate (downsample) signal by an integer factor.
+
+        Args:
+            factor: Integer downsampling factor
+            **kwargs: Additional arguments passed to scipy.signal.decimate
+                     e.g. ftype='fir' or 'iir', n=None (filter order)
+
+        Returns:
+            New Signal instance with decimated data
+
+        Raises:
+            ValueError: If factor is not a positive integer
+        """
+        if not isinstance(factor, (int, np.integer)) or factor < 1:
+            raise ValueError("Decimation factor must be a positive integer")
+
+        method = kwargs.get('method', 'resample')
+        if method == 'resample':
+            decimated_data = scipy.signal.resample(self._data, self._data.shape[0] // factor, axis=0)
+        elif method == 'downsample':
+            decimated_data = self._data[::factor, ...]
+        else:
+            raise ValueError(f"Invalid decimation method: {method}")
+
+        # Update metadata
+        new_metadata = self._metadata.copy()
+
+        # Update sampling interval if it exists
+        if MetadataKeys.X_INTERVAL.value in new_metadata:
+            new_metadata[MetadataKeys.X_INTERVAL.value] *= factor
+
+        # Update name
+        if MetadataKeys.NAME.value in new_metadata:
+            new_metadata[MetadataKeys.NAME.value] += f"_decimated_{factor}"
+
+        # Handle x_data if present
+        new_x_data = None
+        if self._x_data is not None:
+            new_x_data = self._x_data[::factor]
+
+        return Signal(
+            data=decimated_data,
+            metadata=new_metadata,
+            x_data=new_x_data,
+            path=self._path
+        )
+
+
 
 
