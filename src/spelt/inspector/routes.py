@@ -140,7 +140,7 @@ def add_signal_to_plot(plot_state, signal: Signal, representation: str, plot_typ
             serialized = serialize_signal(signal_2d, representation, plot_type='heatmap')
             serialized['index'] = 0
             plot_state['signals'].append(serialized)
-    elif plot_type == 'line':
+    elif plot_type == 'line' or plot_type == 'histogram':
         if signal.ndim == 1:
             # For 1D signals, add directly
             plot_state['signals'].append(serialize_signal(signal, representation, plot_type='line'))
@@ -299,7 +299,7 @@ def browse(subpath=''):
         # Get absolute path of root directory
         root_dir = Path(session['ROOT_DIR']).resolve()
 
-        # Get full absolute path and ensure it exists
+        # Get full path and ensure it exists
         full_path = (root_dir / subpath).resolve()
         if not full_path.exists():
             return jsonify({'error': 'Directory not found'}), 404
@@ -348,6 +348,9 @@ def browse(subpath=''):
                         print(traceback.format_exc())
                         continue
 
+        # Sort items alphabetically by name, case-insensitive
+        items.sort(key=lambda x: x['name'].lower())
+
         return jsonify({
             'items': items,
             'current_path': str(full_path),
@@ -376,6 +379,8 @@ def update_plot():
 
     if plot_type == 'heatmap':
         return update_heatmap_plot(tab_id)
+    elif plot_type == 'histogram':
+        return update_histogram_plot(tab_id)
     else:
         return update_line_plot(tab_id)
 
@@ -393,7 +398,12 @@ def update_heatmap_plot(tab_id):
         height=600,
         sizing_mode='stretch_width',
         toolbar_location='above',
-        tools=get_tools()
+        tools=get_tools(),
+        tooltips=[
+            ('x', '$x{0}'),
+            ('y', '$y{0}'),  # Keep original y coordinate for tooltip
+            ('value', '@image{0.000}')
+        ]
     )
 
     # Configure axes
@@ -401,7 +411,7 @@ def update_heatmap_plot(tab_id):
 
     signal = signals[0]
     # Get data and dimensions
-    data = signal.data
+    data = np.flipud(signal.data)  # Flip the data array vertically
 
     # Get color range from tab state
     color_range = tab_state.get('color_range', {})
@@ -411,15 +421,20 @@ def update_heatmap_plot(tab_id):
     # Create color mapper with custom range
     mapper = LinearColorMapper(palette="Viridis256", low=color_min, high=color_max)
 
-    # Create heatmap
+    # Create heatmap with hover tool
     p.image(
         image=[data],
         x=0,
-        y=0,
+        y=0,  # Start from bottom
         dw=data.shape[1],
-        dh=data.shape[0],
-        color_mapper=mapper
+        dh=data.shape[0],  # Keep height positive
+        color_mapper=mapper,
+        name='heatmap'  # Add name for hover tool reference
     )
+
+    # Remove the y-axis range flip since we're flipping the data instead
+    p.y_range.start = 0  # Start from bottom
+    p.y_range.end = data.shape[0]  # End at height
 
     # Add colorbar
     color_bar = ColorBar(
@@ -688,24 +703,24 @@ def update_line_plot(tab_id):
                 callback = CustomJS(
                     args=dict(
                         signal_path=str(Path(signal_path).relative_to(Path(session['ROOT_DIR']))),
-                        plot_id=plot_id,
-                        tab_id=tab_id,
-                        representation=plot_state['signals'][0].get('representation', 'real')
-                    ),
-                    code="""
-                    // Send the new slice index to the server
-                    fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}&representation=${representation}`)
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.status === 'success') {
-                                // Trigger plot update
-                                window.updatePlot(tab_id);
-                            }
-                        });
-                    """
-                )
-                slider.js_on_change('value', callback)
-                sliders.append(slider)
+                    plot_id=plot_id,
+                    tab_id=tab_id,
+                    representation=plot_state['signals'][0].get('representation', 'real')
+                ),
+                code="""
+                // Send the new slice index to the server
+                fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}&representation=${representation}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            // Trigger plot update
+                            window.updatePlot(tab_id);
+                        }
+                    });
+                """
+            )
+            slider.js_on_change('value', callback)
+            sliders.append(slider)
 
         if SHOW_LEGENDS:
             p.legend.click_policy = "hide"
@@ -741,6 +756,156 @@ def update_line_plot(tab_id):
         'div': div,
         'status': 'success'
     })
+
+
+def update_histogram_plot(tab_id):
+    """Create histogram plot for signals."""
+    tab_state = get_tab(tab_id)
+    signals = get_signals(tab_id)
+
+    # Create figure
+    p = figure(
+        height=600,
+        sizing_mode='stretch_width',
+        toolbar_location='above',
+        tools=get_tools(),
+        x_axis_label='Value',
+        y_axis_label='Count'
+    )
+
+    # Get color palette
+    colors = Category10[10]
+    color_index = 0
+
+    # Process each signal
+    for signal in signals:
+        # Get the data based on signal dimensionality
+        if signal.ndim == 1:
+            # For 1D signals, use data directly
+            data_to_plot = [signal.data]
+            labels = [signal.metadata.get(MetadataKeys.NAME.value, f'Signal {color_index+1}')]
+
+        elif signal.ndim == 2:
+            # For 2D signals, separate each column
+            data_to_plot = [signal.data[:, i] for i in range(signal.shape[1])]
+            labels = [f"{signal.metadata.get(MetadataKeys.NAME.value, 'Signal')} {i}"
+                     for i in range(signal.shape[1])]
+
+        elif signal.ndim == 3:
+            # For 3D signals, use current slice index from slider
+            slider_state = find_slider_state(tab_state['sub_plots']['plot_0'], str(signal.path))
+            if slider_state:
+                slice_idx = slider_state['current_index']
+                data_to_plot = [signal.data[:, i, slice_idx] for i in range(signal.shape[1])]
+                labels = [f"{signal.metadata.get(MetadataKeys.NAME.value, 'Signal')} {i}"
+                         for i in range(signal.shape[1])]
+            else:
+                continue  # Skip if no slider state found
+
+        # Create histogram for each data array
+        for data_array, label in zip(data_to_plot, labels):
+            # Remove any inf or nan values
+            valid_data = data_array[~np.isinf(data_array) & ~np.isnan(data_array)]
+            if len(valid_data) == 0:
+                continue
+
+            # Calculate histogram
+            hist, edges = np.histogram(valid_data, bins=50, density=False)
+
+            # Create data source
+            source = ColumnDataSource({
+                'top': hist,
+                'left': edges[:-1],
+                'right': edges[1:],
+                'name': [label] * len(hist)
+            })
+
+            # Add histogram bars
+            p.quad(
+                top='top',
+                bottom=0,
+                left='left',
+                right='right',
+                source=source,
+                fill_color=colors[color_index % len(colors)],
+                line_color='white',
+                alpha=0.7,
+                legend_label=label
+            )
+            color_index += 1
+
+    # Configure hover tool
+    hover = HoverTool(
+        tooltips=[
+            ('Range', '(@left{0.00}, @right{0.00})'),
+            ('Count', '@top'),
+            ('Name', '@name')
+        ]
+    )
+    p.add_tools(hover)
+
+    # Configure legend
+    if color_index > 0:  # Only add legend if we have plots
+        p.legend.click_policy = "hide"
+        p.legend.location = "top_right"
+
+    # Add sliders for 3D signals
+    sliders = []
+    for plot_id, plot_state in tab_state['sub_plots'].items():
+        if 'sliders' in plot_state:
+            for signal_path, slider_state in plot_state['sliders'].items():
+                slider = Slider(
+                    start=0,
+                    end=slider_state['dimension_size'] - 1,
+                    value=slider_state['current_index'],
+                    step=1,
+                    title=f"{slider_state['dimension_name']} Index",
+                    sizing_mode='stretch_width'
+                )
+
+                callback = CustomJS(
+                    args=dict(
+                        signal_path=signal_path,
+                        plot_id=plot_id,
+                        tab_id=tab_id,
+                        representation=plot_state['signals'][0].get('representation', 'real')
+                    ),
+                    code="""
+                    fetch(`/signal/update_slice/${signal_path}?tab_id=${tab_id}&plot_id=${plot_id}&slice_index=${cb_obj.value}&representation=${representation}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                window.updatePlot(tab_id);
+                            }
+                        });
+                    """
+                )
+                slider.js_on_change('value', callback)
+                sliders.append(slider)
+
+    if sliders:
+        layout = column(
+            *sliders,
+            p,
+            sizing_mode='stretch_width',
+            styles={'width': '100%'}
+        )
+    else:
+        layout = p
+
+    script, div = components(layout)
+
+    # Extract JavaScript
+    script_content = re.search(r'<script.*?>(.*?)</script>', script, re.DOTALL)
+    if script_content:
+        script = script_content.group(1)
+
+    return jsonify({
+        'script': script,
+        'div': div,
+        'status': 'success'
+    })
+
 
 @bp.route('/signal/replace/<path:signal_path>')
 def replace(signal_path):
@@ -1000,5 +1165,4 @@ def set_style(tab_id):
 
     session.modified = True
     return jsonify({'status': 'success'})
-
 

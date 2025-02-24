@@ -7,7 +7,7 @@ from pint import UnitRegistry
 import json
 from pathlib import Path
 from dataclasses import dataclass
-import scipy.signal
+import scipy
 
 ureg = UnitRegistry()
 
@@ -240,14 +240,14 @@ class Signal:
     def __repr__(self) -> str:
         """Return string representation."""
         name = self._metadata.get(MetadataKeys.NAME.value, "unnamed")
-        return f"Signal(name='{name}', length={len(self)})"
+        return f"Signal(name='{name}', shape={self.shape})"
 
     def __str__(self) -> str:
         """Return human-readable string representation."""
         parts = []
         name = self._metadata.get(MetadataKeys.NAME, "unnamed signal")
         parts.append(name)
-        parts.append(f"length: {len(self)}")
+        parts.append(f"shape: {self.shape}")
         if MetadataKeys.UNIT in self._metadata:
             parts.append(f"unit: {self._metadata[MetadataKeys.UNIT]}")
         if self._metadata[MetadataKeys.DOMAIN] != SignalDomain.UNDEFINED.value:
@@ -925,6 +925,68 @@ class Signal:
             path=self._path
         )
 
+    def interpolate(self, factor: int, method: str = 'linear', **kwargs) -> 'Signal':
+        """Interpolate (upsample) signal by an integer factor.
 
+        Args:
+            factor: Integer upsampling factor
+            method: Interpolation method. Options:
+                - 'linear': Linear interpolation
+                - 'cubic': Cubic spline interpolation
+                - 'previous': Previous value interpolation
+                - 'next': Next value interpolation
+                - 'nearest': Nearest value interpolation
+            **kwargs: Additional arguments passed to scipy.interpolate functions
 
+        Returns:
+            New Signal instance with interpolated data
 
+        Raises:
+            ValueError: If factor is not a positive integer or if method is invalid
+        """
+        if not isinstance(factor, (int, np.integer)) or factor < 1:
+            raise ValueError("Interpolation factor must be a positive integer")
+
+        # Create new time points
+        original_length = self._data.shape[0]
+        new_length = original_length * factor
+
+        # Create interpolation points
+        x_original = np.arange(original_length)
+        x_new = np.linspace(0, original_length - 1, new_length)
+
+        # Initialize output array
+        interpolated_data = np.zeros((new_length,) + self._data.shape[1:])
+
+        # Handle all interpolation methods using interp1d
+        if method not in ['linear', 'cubic', 'previous', 'next', 'nearest']:
+            raise ValueError(f"Invalid interpolation method: {method}. "
+                        f"Must be one of: 'linear', 'cubic', 'previous', 'next', 'nearest'")
+
+        for i in np.ndindex(self._data.shape[1:]):
+            idx = (slice(None),) + i  # This creates the equivalent of [:, *i] for older Python versions
+            f = scipy.interpolate.interp1d(x_original, self._data[idx], kind=method, **kwargs)
+            interpolated_data[idx] = f(x_new)
+
+        # Update metadata
+        new_metadata = self._metadata.copy()
+
+        # Update sampling interval if it exists
+        if MetadataKeys.X_INTERVAL.value in new_metadata:
+            new_metadata[MetadataKeys.X_INTERVAL.value] /= factor
+
+        # Update name
+        if MetadataKeys.NAME.value in new_metadata:
+            new_metadata[MetadataKeys.NAME.value] += f"_interpolated_{factor}x_{method}"
+
+        # Handle x_data if present
+        new_x_data = None
+        if self._x_data is not None:
+            new_x_data = np.interp(x_new, x_original, self._x_data)
+
+        return Signal(
+            data=interpolated_data,
+            metadata=new_metadata,
+            x_data=new_x_data,
+            path=self._path
+        )
